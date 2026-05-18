@@ -53,10 +53,18 @@ SCRCPY_START_DELAY = 1.0
 
 # ADB command timeouts
 ADB_CAPTURE_OUTPUT = True
-ADB_SERVER_TIMEOUT = 10
+# Generous timeout for `adb start-server` and `adb devices` because
+# the first time a freshly-downloaded adb.exe runs, Windows Defender
+# (and SmartScreen for "Mark of the Web") scans the binary and its
+# DLLs synchronously, which can briefly hang the spawn well beyond
+# 10 seconds. 30s gives plenty of headroom; subsequent calls are
+# fast once the binaries are scan-cached.
+ADB_SERVER_TIMEOUT = 30
 ADB_TASKKILL_TIMEOUT = 5
 ADB_TCPIP_TIMEOUT = 10
 ADB_CONNECT_TIMEOUT = 10
+# How many times to retry `adb start-server` before giving up.
+ADB_SERVER_START_RETRIES = 2
 
 # Logging constants
 LOG_MULT = 60
@@ -244,25 +252,38 @@ class ScrcpyManager:
             logger.error("Cannot detect device: ADB binary not found")
             return None
 
-        # Start ADB server
-        try:
-            logger.debug("Starting ADB server")
-            result = subprocess.run(
-                [self.adb_bin, "start-server"],
-                capture_output=ADB_CAPTURE_OUTPUT,
-                text=True,
-                timeout=ADB_SERVER_TIMEOUT,
-            )
-            if result.returncode != 0:
-                logger.warning(f"ADB start-server returned code {result.returncode}")
-            else:
-                logger.debug("ADB server started successfully")
-        except subprocess.TimeoutExpired:
-            logger.error("ADB server start timeout")
+        # Start ADB server (with one retry - the first launch on a
+        # freshly-downloaded build can be delayed by Defender's
+        # Mark-of-the-Web scan; the second attempt is virtually
+        # instant once the binary is scan-cached).
+        started = False
+        last_error = None
+        for attempt in range(1, ADB_SERVER_START_RETRIES + 1):
+            try:
+                logger.debug(f"Starting ADB server (attempt {attempt}/{ADB_SERVER_START_RETRIES})")
+                result = subprocess.run(
+                    [self.adb_bin, "start-server"],
+                    capture_output=ADB_CAPTURE_OUTPUT,
+                    text=True,
+                    timeout=ADB_SERVER_TIMEOUT,
+                )
+                if result.returncode != 0:
+                    logger.warning(f"ADB start-server returned code {result.returncode}")
+                started = True
+                break
+            except subprocess.TimeoutExpired as TimeoutErr:
+                last_error = TimeoutErr
+                logger.warning(
+                    f"ADB server start timed out (attempt {attempt}/{ADB_SERVER_START_RETRIES}); "
+                    f"likely Defender scanning a freshly-downloaded binary - retrying"
+                )
+            except Exception as AdbServerStartError:
+                last_error = AdbServerStartError
+                logger.error(f"Failed to start ADB server (attempt {attempt}): {AdbServerStartError}")
+        if not started:
+            logger.error(f"ADB server failed to start after {ADB_SERVER_START_RETRIES} attempts: {last_error}")
             return None
-        except Exception as AdbServerStartError:
-            logger.error(f"Failed to start ADB server: {AdbServerStartError}")
-            return None
+        logger.debug("ADB server started successfully")
 
         # Get list of devices
         try:
