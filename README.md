@@ -18,12 +18,17 @@
   <img src="https://img.shields.io/badge/platform-Windows%2010%2F11-0078d4?style=for-the-badge&logo=windows" alt="Windows 10/11">
 </p>
 
-> **Quick start (no Python needed):** grab `scrcpy-thor-ui.exe` from the
-> [latest release](https://github.com/tommywaaf/scrcpy-thor-ui/releases/latest)
-> and double-click it. The .exe is fully self-contained — `scrcpy.exe`,
-> `adb.exe` and the supporting DLLs are bundled inside it. The first
-> launch creates `config/` and `logs/` folders next to the .exe for
-> your settings and rotated log files.
+> **Quick start (no Python needed):** grab `scrcpy-thor-ui-v1.0.0.zip`
+> from the [latest release](https://github.com/tommywaaf/scrcpy-thor-ui/releases/latest),
+> unzip it anywhere on your PC, and double-click `scrcpy-thor-ui.exe`
+> inside the unzipped folder. `scrcpy.exe`, `adb.exe`, the supporting
+> DLLs and all assets ship inside `_internal/`. `config/` and `logs/`
+> are created next to the .exe on first launch.
+>
+> *(We ship a folder-based build instead of a single-file `.exe`
+> because Windows Defender real-time-scans the contents of one-file
+> exes on every launch, which caused noticeable audio/video stutter.
+> Folder builds get scanned once and then run at full speed.)*
 
 scrcpy-thor-ui mirrors both screens of the AYN Thor to your Windows
 desktop and draws a real-time virtual controller around the bottom
@@ -121,9 +126,11 @@ pip install pyinstaller
 python build.py
 ```
 
-Output appears at `dist/scrcpy-thor-ui.exe`. The bundle is
-self-contained — you can move the .exe anywhere on disk. `config/`
-and `logs/` will be created next to it on first run.
+Output appears at `dist/scrcpy-thor-ui/` (a folder containing
+`scrcpy-thor-ui.exe` next to an `_internal/` folder with all
+dependencies). The folder is fully self-contained — you can move it
+anywhere on disk. `config/` and `logs/` are created next to the .exe
+on first run. Zip the folder if you want to redistribute it.
 
 ### Option 3 — Pre-built release
 
