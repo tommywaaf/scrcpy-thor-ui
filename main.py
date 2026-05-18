@@ -17,10 +17,10 @@
 
 # main.py
 
-__version__ = "0.3.0"
-__app_name__ = "ThorCPY"
-__author__ = "the_swest"
-__description__ = "AYN Thor screen mirroring and docking tool"
+__version__ = "0.4.0"
+__app_name__ = "scrcpy-thor-ui"
+__author__ = "tommywaaf (fork of ThorCPY by the_swest)"
+__description__ = "AYN Thor screen mirroring + live virtual controller overlay"
 
 import ctypes
 import os

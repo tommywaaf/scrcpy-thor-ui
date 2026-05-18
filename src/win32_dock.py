@@ -95,7 +95,7 @@ class Win32Dock:
         self._last_bottom_geom = None
         logger.debug("Win32Dock initialized with null window handles")
 
-    def sync(self, tx, ty, bx, by, w1, h1, w2, h2, is_docked=True):
+    def sync(self, tx, ty, bx, by, w1, h1, w2, h2, is_docked=True, sync_top=True):
         """
         Moves and resizes both embedded windows
 
@@ -105,6 +105,10 @@ class Win32Dock:
             w1, h1: top window width/height
             w2, h2: bottom window width/height
             is_docked: whether windows are docked inside container
+            sync_top: when False, leave the top window alone (used
+                when only the top has been "separated" - it's now a
+                draggable top-level window and we mustn't fight the
+                user's drags by re-positioning it every frame).
         """
 
         # Throttle rapid updates
@@ -133,7 +137,7 @@ class Win32Dock:
                 top_geom = (int(tx), int(ty), int(w1), int(h1))
                 bottom_geom = (int(bx), int(by), int(w2), int(h2))
 
-                if top_geom != self._last_top_geom:
+                if sync_top and top_geom != self._last_top_geom:
                     logger.debug(f"Syncing docked top: {top_geom}")
                     if not user32.SetWindowPos(self.hwnd_top, 0, *top_geom, flags):
                         logger.warning(
@@ -292,6 +296,13 @@ def apply_undocked_style(hwnd):
     """
     Restore a child window back to a normal resizable desktop window.
 
+    Adds back the standard WS_OVERLAPPEDWINDOW decorations so the user
+    can drag, resize, minimise/maximise and close each scrcpy window
+    independently when "Separate screens" is checked. (Upstream ThorCPY
+    used to strip these for borderless OBS capture - we keep them for
+    a saner default; the chassis overlay handles streaming layout
+    separately.)
+
     Args:
         hwnd: Window handle to restore to normal style
     """
@@ -310,11 +321,12 @@ def apply_undocked_style(hwnd):
 
         logger.debug(f"Current window style: 0x{style:08x}")
 
-        # Remove child flag and all decorations
-        style &= ~(WS_CHILD | WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU | WS_BORDER)
-
-        # Keep visible as a top-level window with clipping
-        style |= WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS
+        # Remove child flag (the only thing that needs to come off
+        # to restore independent top-level behaviour) and re-apply
+        # the full overlapped-window decoration set so the user can
+        # drag the windows around again.
+        style &= ~WS_CHILD
+        style |= WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS
 
         logger.debug(f"New window style: 0x{style:08x}")
 

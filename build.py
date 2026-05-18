@@ -1,21 +1,7 @@
-# ThorCPY – Dual-screen scrcpy docking and control UI for Windows
-# Copyright (C) 2026 the_swest
-# Contact: Github issues
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+# scrcpy-thor-ui - Dual-screen scrcpy launcher with virtual controller overlay.
+# Fork of ThorCPY by the_swest. Licensed under the GNU GPL v3.
 
-# build.py
+# build.py - PyInstaller bundling for scrcpy-thor-ui.
 
 import PyInstaller.__main__
 
@@ -25,12 +11,13 @@ PyInstaller.__main__.run(
         "--onefile",
         "--noconsole",
         "--clean",
-        "--name=ThorCPY",
+        "--name=scrcpy-thor-ui",
         "--add-data=config;config",
         "--add-data=bin;bin",
         "--add-data=logs;logs",
         "--add-data=assets/fonts;assets/fonts",
         "--add-data=assets/icon.png;assets",
-        "--icon=assets/icon.ico",
+        "--add-data=assets/scrcpy-thor-ui-logo.png;assets",
+        "--icon=assets/scrcpy-thor-ui.ico",
     ]
 )

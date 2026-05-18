@@ -1,14 +1,29 @@
 <p align="center">
-  <img src="assets/thorcrcpybuttons_logo.png" alt="ThorCrcpyButtons" width="220">
+  <img src="assets/scrcpy-thor-ui-logo.png" alt="scrcpy-thor-ui" width="220">
 </p>
 
-<h1 align="center">ThorCrcpyButtons</h1>
+<h1 align="center">scrcpy-thor-ui</h1>
 
 <p align="center">
   <em>A dual-screen scrcpy launcher for the AYN Thor with a live virtual controller overlay.</em>
 </p>
 
-ThorCrcpyButtons mirrors both screens of the AYN Thor to your Windows
+<p align="center">
+  <a href="https://github.com/tommywaaf/scrcpy-thor-ui/releases/latest">
+    <img src="https://img.shields.io/badge/download-latest%20release-5fb1ff?style=for-the-badge&logo=github" alt="Download latest release">
+  </a>
+  <a href="LICENSE">
+    <img src="https://img.shields.io/badge/license-GPL%20v3-blue?style=for-the-badge" alt="GPL v3">
+  </a>
+  <img src="https://img.shields.io/badge/platform-Windows%2010%2F11-0078d4?style=for-the-badge&logo=windows" alt="Windows 10/11">
+</p>
+
+> **Quick start (no Python needed):** grab `scrcpy-thor-ui.exe` from the
+> [latest release](https://github.com/tommywaaf/scrcpy-thor-ui/releases/latest),
+> drop it next to the bundled `bin/`, `config/` and `logs/` folders
+> from this repo, and double-click it.
+
+scrcpy-thor-ui mirrors both screens of the AYN Thor to your Windows
 desktop and draws a real-time virtual controller around the bottom
 screen. Every button press, joystick tilt, D-pad direction and trigger
 pull on the actual handheld is reflected on screen in the same instant
@@ -91,8 +106,8 @@ to take effect.
 > Pygame doesn't ship a wheel for Python 3.14 yet; use Python 3.10–3.12.
 
 ```powershell
-git clone https://github.com/tommywaaf/ThorCrcpyButtons.git
-cd ThorCrcpyButtons
+git clone https://github.com/tommywaaf/scrcpy-thor-ui.git
+cd scrcpy-thor-ui
 pip install -r requirements.txt
 python main.py
 ```
@@ -104,19 +119,19 @@ pip install pyinstaller
 python build.py
 ```
 
-Output appears at `dist/ThorCrcpyButtons.exe`. Place the executable in
+Output appears at `dist/scrcpy-thor-ui.exe`. Place the executable in
 a folder that also contains `bin/`, `config/` and `logs/`.
 
 ### Option 3 — Pre-built release
 
 Pre-built executables (when available) live on the
-[Releases](https://github.com/tommywaaf/ThorCrcpyButtons/releases) page.
+[Releases](https://github.com/tommywaaf/scrcpy-thor-ui/releases) page.
 
 ---
 
 ## Bundled software
 
-ThorCrcpyButtons ships with the following third-party binaries for
+scrcpy-thor-ui ships with the following third-party binaries for
 end-user convenience. They are unmodified.
 
 - **scrcpy v3.3.4** — Apache License 2.0. See `bin/LICENSE_scrcpy.txt`. Source: https://github.com/Genymobile/scrcpy
@@ -143,7 +158,7 @@ into the `bin/` folder.
 ## Usage
 
 ### Connecting the device
-- **USB:** Plug in the Thor and launch ThorCrcpyButtons. The first launch will require you to tap **Allow** on the device when the RSA-key prompt appears.
+- **USB:** Plug in the Thor and launch scrcpy-thor-ui. The first launch will require you to tap **Allow** on the device when the RSA-key prompt appears.
 - **Wireless:** Launch without a USB device, click **Wireless** in the control panel, then either:
   - Pair with code (Android 11+ Wireless Debugging), or
   - Connect by `IP:5555` after enabling TCP/IP mode while still wired.
@@ -251,7 +266,7 @@ logging.basicConfig(level=logging.DEBUG, ...)
 
 ## Credits & upstream
 
-ThorCrcpyButtons is built on top of the excellent
+scrcpy-thor-ui is built on top of the excellent
 [**ThorCPY**](https://github.com/theswest/ThorCPY) by *the_swest*,
 which provided the original dual-screen Win32 docking, layout editor,
 preset system, screenshot pipeline and wireless pairing flow. All of
@@ -269,7 +284,7 @@ This fork additionally credits:
 
 ## License
 
-ThorCrcpyButtons is licensed under the **GNU General Public License
+scrcpy-thor-ui is licensed under the **GNU General Public License
 v3.0** (inherited from upstream ThorCPY). See `LICENSE` for the full
 text. You're free to modify and redistribute under the same terms.
 

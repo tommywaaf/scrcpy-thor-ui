@@ -314,7 +314,7 @@ class ChassisRenderer:
         Diamond-pattern colored buttons in AYN Thor layout:
         X top, A right, B bottom, Y left.
         """
-        r = max(12, int(anchor_size * 0.55))
+        r = max(12, int(anchor_size * 0.47))
         gap = int(r * 1.55)
 
         positions = {

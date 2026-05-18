@@ -74,7 +74,7 @@ BOTTOM_SCREEN_DEFAULT_Y = 0
 DEFAULT_GLOBAL_SCALE = 0.6
 
 # Allowed scrcpy FPS values exposed in the control panel.
-ALLOWED_FPS_VALUES = (30, 60, 120)
+ALLOWED_FPS_VALUES = (30, 60, 90, 120)
 DEFAULT_MAX_FPS = 60
 
 # Virtual chassis (Phase 1: static button strip art on each side
@@ -185,6 +185,15 @@ class Launcher:
         self._input_dirty = threading.Event()
         # Last time we rebuilt the chassis bitmap, used for throttling.
         self._last_chassis_redraw = 0.0
+
+        # When chassis is on AND the user has ticked "Separate screens",
+        # we float ONLY the top scrcpy window and keep the bottom one
+        # docked inside a shrunk container that still shows the chassis
+        # buttons on each side. This flag tracks that intermediate
+        # state so all the layout maths can adjust to it.
+        self._top_only_separated = False
+        self._original_container_w = 0
+        self._original_container_h = 0
         # Min interval between chassis redraws while inputs are streaming.
         # 33 ms ~= 30 fps which is plenty smooth for joystick movement
         # without melting CPU when an axis fires every few ms.
@@ -367,8 +376,11 @@ class Launcher:
             return True
 
         try:
-            bottom_y = self.by
             bottom_h = self.scrcpy.f_h2
+            # When the top screen has been floated out, the container
+            # has been shrunk to just the bottom row, so the bottom
+            # screen now sits at y=0 inside it.
+            bottom_y = 0 if self._top_only_separated else self.by
             # Side strip rectangles cover the empty space to the left
             # and right of the centered bottom screen.
             left_strip = (0, bottom_y, self.bx, bottom_h)
@@ -629,6 +641,10 @@ class Launcher:
             # buttons render.
             client_w = max(self.scrcpy.f_w1, self.scrcpy.f_w2 + abs(self.bx))
             client_h = self.scrcpy.f_h1 + self.scrcpy.f_h2
+            # Stash the full size so we can shrink and restore later
+            # when the user toggles "Separate screens".
+            self._original_container_w = client_w
+            self._original_container_h = client_h
 
             # Adjustments for window decorations
             rect = wintypes.RECT(0, 0, int(client_w), int(client_h))
@@ -641,7 +657,7 @@ class Launcher:
             hwnd = self.user32.CreateWindowExW(
                 WS_EX_CONTROLPARENT,
                 "ThorFinalBridge",
-                "ThorCPY",
+                "scrcpy-thor-ui",
                 style,
                 DEFAULT_CONTAINER_X,
                 DEFAULT_CONTAINER_Y,
@@ -698,51 +714,143 @@ class Launcher:
 
     def toggle_dock(self):
         """
-        Switches between docked and undocked mode
-        Updates window styles and visibility
+        Toggle the "Separate screens" mode.
+
+        Three states are possible:
+
+        1. DOCKED        - both screens inside the container, chassis
+                           painted around the bottom screen.
+        2. TOP_FLOATING  - chosen automatically when the user enables
+                           "Separate screens" while the chassis overlay
+                           is ON. The container shrinks down to just
+                           the bottom row (bottom scrcpy window plus
+                           chassis on each side) and the top scrcpy
+                           window pops out as an independent draggable
+                           top-level window.
+        3. BOTH_FLOATING - chosen when the user enables "Separate
+                           screens" while the chassis overlay is OFF.
+                           The container hides entirely and both
+                           scrcpy windows float free.
         """
         if not self.dock.hwnd_top or not self.dock.hwnd_bottom:
             logger.warning("Cannot toggle dock: windows not available")
             return
 
-        # Use lock to prevent race condition with _docking_monitor
         with self.dock_lock:
             if self.docked:
-                # Undock windows
-                logger.info("Undocking windows")
+                # === DOCKED -> SEPARATED ===
+                logger.info("Undocking windows (chassis_enabled=%s)", self.chassis_enabled)
                 self.docked = False
 
-                apply_undocked_style(self.dock.hwnd_top)
-                apply_undocked_style(self.dock.hwnd_bottom)
-                self.user32.ShowWindow(self.hwnd_container, SW_HIDE)
+                if self.chassis_enabled:
+                    # Top floats free, bottom stays in a shrunk
+                    # container that still shows the chassis art.
+                    self._top_only_separated = True
+                    apply_undocked_style(self.dock.hwnd_top)
+                    self._resize_container_for_separation()
+                    self._build_chassis_bitmap()
+                    self._invalidate_chassis()
+                else:
+                    # Classic full-separation behaviour - both windows
+                    # become independent and the container disappears.
+                    self._top_only_separated = False
+                    apply_undocked_style(self.dock.hwnd_top)
+                    apply_undocked_style(self.dock.hwnd_bottom)
+                    self.user32.ShowWindow(self.hwnd_container, SW_HIDE)
+
                 self.dock.invalidate_geom_cache()
-
                 logger.info("Windows undocked successfully")
+
             else:
-                # Dock windows in a container
-                logger.info("Docking windows")
-                self.user32.ShowWindow(self.hwnd_container, SW_SHOW)
+                # === SEPARATED -> DOCKED ===
+                logger.info("Docking windows back (top_only=%s)", self._top_only_separated)
+                was_top_only = self._top_only_separated
+                self._top_only_separated = False
 
-                # Re-find window handles in case they became invalid after undocking
-                topScr = self.user32.FindWindowW(None, TOP_SCREEN_WINDOW_TITLE)
-                bottomScr = self.user32.FindWindowW(None, BOTTOM_SCREEN_WINDOW_TITLE)
+                if was_top_only:
+                    # Only the TOP was floating - the bottom never
+                    # left the container, so its cached child hwnd is
+                    # still valid (FindWindowW can't see child
+                    # windows so we mustn't try to re-look it up).
+                    # We DO need to re-find the top because it has
+                    # been a top-level window and may have been moved
+                    # or otherwise re-validated.
+                    topScr = self.user32.FindWindowW(None, TOP_SCREEN_WINDOW_TITLE)
+                    if not topScr:
+                        logger.error("Failed to find top scrcpy window for re-docking")
+                        self._top_only_separated = was_top_only
+                        return
+                    self.dock.hwnd_top = topScr
+                    # Container is currently shrunk - restore full size
+                    # before re-parenting the top.
+                    self._resize_container_to_full()
+                    self.user32.SetParent(self.dock.hwnd_top, self.hwnd_container)
+                    apply_docked_style(self.dock.hwnd_top)
+                    self._build_chassis_bitmap()
+                    self._invalidate_chassis()
+                else:
+                    # Both were floating top-level windows so we can
+                    # safely re-find both by title.
+                    topScr = self.user32.FindWindowW(None, TOP_SCREEN_WINDOW_TITLE)
+                    bottomScr = self.user32.FindWindowW(None, BOTTOM_SCREEN_WINDOW_TITLE)
+                    if not topScr or not bottomScr:
+                        logger.error("Failed to find scrcpy windows for re-docking")
+                        return
+                    self.dock.hwnd_top = topScr
+                    self.dock.hwnd_bottom = bottomScr
+                    self.user32.ShowWindow(self.hwnd_container, SW_SHOW)
+                    self.user32.SetParent(self.dock.hwnd_top, self.hwnd_container)
+                    self.user32.SetParent(self.dock.hwnd_bottom, self.hwnd_container)
+                    apply_docked_style(self.dock.hwnd_top)
+                    apply_docked_style(self.dock.hwnd_bottom)
 
-                if not topScr or not bottomScr:
-                    logger.error("Failed to find scrcpy windows for re-docking")
-                    return
-
-                # Update handles to ensure they're current
-                self.dock.hwnd_top = topScr
-                self.dock.hwnd_bottom = bottomScr
-
-                self.user32.SetParent(self.dock.hwnd_top, self.hwnd_container)
-                self.user32.SetParent(self.dock.hwnd_bottom, self.hwnd_container)
-                apply_docked_style(self.dock.hwnd_top)
-                apply_docked_style(self.dock.hwnd_bottom)
                 self.dock.invalidate_geom_cache()
                 self.docked = True
-
                 logger.info("Windows docked successfully")
+
+    def _resize_container_for_separation(self):
+        """
+        Shrink the container window down to just the bottom row
+        (bottom screen + chassis side strips). Used when entering
+        TOP_FLOATING mode so the chassis stays visible around the
+        bottom screen but the wasted top-row area disappears.
+        """
+        if not self.hwnd_container:
+            return
+        cw = self._original_container_w or self.scrcpy.f_w1
+        new_h = self.scrcpy.f_h2
+        # Adjust outer window size to keep the desired client size
+        rect = wintypes.RECT(0, 0, int(cw), int(new_h))
+        WS_OVERLAPPEDWINDOW = 0x00CF0000
+        WS_EX_CONTROLPARENT = 0x00010000
+        self.user32.AdjustWindowRectEx(ctypes.byref(rect), WS_OVERLAPPEDWINDOW, False,
+                                       WS_EX_CONTROLPARENT)
+        SWP_NOMOVE = 0x0002
+        SWP_NOZORDER = 0x0004
+        self.user32.SetWindowPos(
+            self.hwnd_container, 0, 0, 0,
+            rect.right - rect.left, rect.bottom - rect.top,
+            SWP_NOMOVE | SWP_NOZORDER,
+        )
+
+    def _resize_container_to_full(self):
+        """Restore the container to its original full size."""
+        if not self.hwnd_container:
+            return
+        cw = self._original_container_w or self.scrcpy.f_w1
+        ch = self._original_container_h or (self.scrcpy.f_h1 + self.scrcpy.f_h2)
+        rect = wintypes.RECT(0, 0, int(cw), int(ch))
+        WS_OVERLAPPEDWINDOW = 0x00CF0000
+        WS_EX_CONTROLPARENT = 0x00010000
+        self.user32.AdjustWindowRectEx(ctypes.byref(rect), WS_OVERLAPPEDWINDOW, False,
+                                       WS_EX_CONTROLPARENT)
+        SWP_NOMOVE = 0x0002
+        SWP_NOZORDER = 0x0004
+        self.user32.SetWindowPos(
+            self.hwnd_container, 0, 0, 0,
+            rect.right - rect.left, rect.bottom - rect.top,
+            SWP_NOMOVE | SWP_NOZORDER,
+        )
 
     def show_connection_dialog(self):
         """
@@ -903,19 +1011,29 @@ class Launcher:
                     self.stop()
                 self.ui.handle_event(event)
 
-            # Sync window positions if they exist
+            # Sync window positions if they exist. When only the top
+            # is separated, the bottom screen needs to sit at y=0
+            # inside the shrunk container, and we must NOT touch the
+            # top window any more (it's draggable now and keeps its
+            # own coords).
             if self.dock.hwnd_top or self.dock.hwnd_bottom:
-                self.dock.sync(
-                    self.tx,
-                    self.ty,
-                    self.bx,
-                    self.by,
-                    self.scrcpy.f_w1,
-                    self.scrcpy.f_h1,
-                    self.scrcpy.f_w2,
-                    self.scrcpy.f_h2,
-                    is_docked=self.docked,
-                )
+                if self._top_only_separated:
+                    self.dock.sync(
+                        self.tx, self.ty,
+                        self.bx, 0,
+                        self.scrcpy.f_w1, self.scrcpy.f_h1,
+                        self.scrcpy.f_w2, self.scrcpy.f_h2,
+                        is_docked=True,
+                        sync_top=False,
+                    )
+                else:
+                    self.dock.sync(
+                        self.tx, self.ty,
+                        self.bx, self.by,
+                        self.scrcpy.f_w1, self.scrcpy.f_h1,
+                        self.scrcpy.f_w2, self.scrcpy.f_h2,
+                        is_docked=self.docked,
+                    )
 
             # Repaint the chassis bitmap if the input state changed
             # (throttled so axis storms don't churn the GPU/CPU).

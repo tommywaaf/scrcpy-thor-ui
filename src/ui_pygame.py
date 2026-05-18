@@ -53,12 +53,15 @@ LARGE_FONT_SIZE = 24
 MEDIUM_FONT_SIZE = 16
 SMALL_FONT_SIZE = 14
 
-# Colour palette hex values
-BG_HEX = "#121418"
-PANEL_HEX = "#1e2128"
+# Colour palette hex values - tuned for scrcpy-thor-ui.
+# The accent is a brighter electric blue matching the lightning bolt
+# in the logo (the upstream value was #4a90e2 / soft sky blue).
+BG_HEX = "#0d1015"
+PANEL_HEX = "#1c1f27"
 BORDER_HEX = "#2d3139"
-TEXT_HEX = "#c8cdd8"
-ACCENT_HEX = "#4a90e2"
+TEXT_HEX = "#d6dbe6"
+ACCENT_HEX = "#5fb1ff"
+ACCENT_GLOW_HEX = "#7ec3ff"
 TOP_HEX = "#e74c3c"
 BOTTOM_HEX = "#3498db"
 SUCCESS_HEX = "#2ecc71"
@@ -140,16 +143,24 @@ FPS_BUTTON_Y = 410
 FPS_BUTTON_WIDTH = 180
 FPS_BUTTON_HEIGHT = 36
 
+# FPS dropdown menu (drawn last so it overlays everything below it).
+FPS_MENU_ITEM_HEIGHT = 30
+FPS_MENU_PADDING = 4
+
 RESTART_BUTTON_X = 230
 RESTART_BUTTON_Y = 410
 RESTART_BUTTON_WIDTH = 180
 RESTART_BUTTON_HEIGHT = 36
 
-# Dock/Undock button
-UNDOCK_BUTTON_X = 40
-UNDOCK_BUTTON_Y = 460
-UNDOCK_BUTTON_WIDTH = 180
-UNDOCK_BUTTON_HEIGHT = 36
+# "Separate screens" checkbox - replaces the upstream Undock/Dock
+# button with a clearer checkbox UX. When checked, the two scrcpy
+# windows pop out of the container as independent floating windows
+# (useful for streaming layouts in OBS).
+SEPARATE_CHECKBOX_X = 40
+SEPARATE_CHECKBOX_Y = 460
+SEPARATE_CHECKBOX_BOX_SIZE = 22
+SEPARATE_CHECKBOX_WIDTH = 180
+SEPARATE_CHECKBOX_HEIGHT = 36
 
 # Screenshot button
 SCREENSHOT_BUTTON_X = 230
@@ -252,9 +263,12 @@ def resource_path(rel):
         logger.error(f"Failed to resolve resource path for '{rel}': {PathResolutionError}")
         return rel
 
-# Assets path
+# Assets path - branded for scrcpy-thor-ui. The legacy icon is kept
+# at assets/icon.png for backwards compat in case anyone else builds
+# from this tree, but we point our pygame window icon at the new
+# Mjolnir + ABXY logo.
 FONT_PATH = resource_path("assets/fonts/CalSans-Regular.ttf")
-ICON_PATH = resource_path("assets/icon.png")
+ICON_PATH = resource_path("assets/scrcpy-thor-ui-logo.png")
 
 
 def hex_to_rgb(hex_color):
@@ -338,7 +352,7 @@ def show_loading_screen():
     for frame in range(LOADING_ANIMATION_FRAME_COUNT):
         try:
             screen.fill(LOADING_SCREEN_COLOR)
-            txt = font.render("Starting ThorCPY...", True, (200, 200, 200))
+            txt = font.render("Starting scrcpy-thor-ui...", True, (200, 200, 200))
             screen.blit(txt, (LOADING_SCREEN_X, LOADING_SCREEN_Y))
             pygame.display.flip()
             clock.tick(LOADING_ANIMATION_FRAME_COUNT/2)
@@ -402,7 +416,7 @@ class PygameUI:
         # Create window
         try:
             self.screen = pygame.display.set_mode((CONTROL_PANEL_WIDTH, CONTROL_PANEL_HEIGHT))
-            pygame.display.set_caption("ThorCPY Control Panel")
+            pygame.display.set_caption("scrcpy-thor-ui")
             logger.debug("UI window created successfully")
         except Exception as UICreationError:
             logger.error(f"Failed to create UI window: {UICreationError}")
@@ -437,12 +451,22 @@ class PygameUI:
             "border": hex_to_rgb(BORDER_HEX),
             "text": hex_to_rgb(TEXT_HEX),
             "accent": hex_to_rgb(ACCENT_HEX),
+            "accent_glow": hex_to_rgb(ACCENT_GLOW_HEX),
             "top": hex_to_rgb(TOP_HEX),
             "bot": hex_to_rgb(BOTTOM_HEX),
             "success": hex_to_rgb(SUCCESS_HEX),
             "danger": hex_to_rgb(DANGER_HEX),
             "warning": hex_to_rgb(WARNING_HEX),
         }
+
+        # Pre-scale the logo for the title bar so we don't blit a
+        # 1024x1024 image every frame.
+        try:
+            raw_logo = pygame.image.load(ICON_PATH).convert_alpha()
+            self.title_logo = pygame.transform.smoothscale(raw_logo, (40, 40))
+        except Exception as TitleLogoError:
+            logger.warning(f"Failed to prep title logo: {TitleLogoError}")
+            self.title_logo = None
 
         # Slider interaction
         self.dragging = None  # Currently dragged slider
@@ -470,6 +494,11 @@ class PygameUI:
         # Track scale changes
         self._scale_changed = False
         self._original_scale = self.l.global_scale
+
+        # FPS dropdown menu state. When True, render() draws an overlay
+        # of FPS choices on top of everything else and intercepts the
+        # next click to either choose an option or dismiss the menu.
+        self._fps_menu_open = False
 
         logger.info("PygameUI initialization complete")
 
@@ -714,12 +743,32 @@ class PygameUI:
 
             self.screen.fill(self.colors["bg"])
 
-            # Title
-            title_txt = self.font_lg.render("ThorCPY Control Panel", True, self.colors["text"])
-            self.screen.blit(title_txt, (TITLE_MARGIN_X, TITLE_MARGIN_Y))
+            # Title row: logo + app name. The logo nudges the title
+            # text right by its width plus a small gap.
+            title_x = TITLE_MARGIN_X
+            title_y = TITLE_MARGIN_Y
+            if self.title_logo is not None:
+                logo_y = title_y - 6
+                self.screen.blit(self.title_logo, (title_x, logo_y))
+                title_x += self.title_logo.get_width() + 10
+            title_txt = self.font_lg.render(
+                "scrcpy-thor-ui", True, self.colors["text"]
+            )
+            self.screen.blit(title_txt, (title_x, title_y))
 
-            pygame.draw.line(self.screen, self.colors["border"], (TITLE_SEPARATOR_LEFT, TITLE_SEPARATOR_Y),
-                             (TITLE_SEPARATOR_RIGHT, TITLE_SEPARATOR_Y))
+            # Two-tone separator: a faint border line plus a short
+            # accent stub on the left for a bit of visual identity.
+            pygame.draw.line(
+                self.screen, self.colors["border"],
+                (TITLE_SEPARATOR_LEFT, TITLE_SEPARATOR_Y),
+                (TITLE_SEPARATOR_RIGHT, TITLE_SEPARATOR_Y),
+            )
+            pygame.draw.line(
+                self.screen, self.colors["accent"],
+                (TITLE_SEPARATOR_LEFT, TITLE_SEPARATOR_Y),
+                (TITLE_SEPARATOR_LEFT + 80, TITLE_SEPARATOR_Y),
+                2,
+            )
 
             # Layout controls header
             self.screen.blit(
@@ -799,28 +848,29 @@ class PygameUI:
                 self.colors["bot"], "by"
             )
 
-            # FPS selector (cycles 30 -> 60 -> 120). The slider-style
-            # widgets in this panel are only for layout coords; FPS is
-            # one of three discrete values and a cycling button is
-            # the most space-efficient way to expose it.
+            # FPS selector. Click opens a small popup with each
+            # allowed FPS value; pick one to set, or click outside to
+            # dismiss. The dropdown itself is rendered LAST in this
+            # method so it stacks on top of everything else.
             fps_btn = pygame.Rect(
                 FPS_BUTTON_X, FPS_BUTTON_Y, FPS_BUTTON_WIDTH, FPS_BUTTON_HEIGHT
             )
             fps_hover = fps_btn.collidepoint(mx, my)
             current_fps = getattr(self.l, "max_fps", 60)
-            fps_face = self.colors["panel"] if not fps_hover else self.colors["border"]
+            fps_face = (
+                self.colors["accent"] if self._fps_menu_open
+                else (self.colors["border"] if fps_hover else self.colors["panel"])
+            )
+            fps_text_color = WHITE_TEXT if self._fps_menu_open else self.colors["text"]
             pygame.draw.rect(self.screen, fps_face, fps_btn, border_radius=PRESET_BORDER_RADIUS)
-            fps_text = self.font_md.render(f"FPS: {current_fps}", True, self.colors["text"])
+            fps_text = self.font_md.render(f"FPS: {current_fps}  v", True, fps_text_color)
             self.screen.blit(fps_text, fps_text.get_rect(center=fps_btn.center))
 
             if fps_hover and m_click and not self.m_locked and not self.dragging:
                 self.pressed_button = "fps"
             if not m_click and self.pressed_button == "fps":
-                if fps_hover and hasattr(self.l, "cycle_max_fps"):
-                    new_fps = self.l.cycle_max_fps()
-                    self.show_status(
-                        f"FPS set to {new_fps} (click RESTART to apply)", "info",
-                    )
+                if fps_hover:
+                    self._fps_menu_open = not self._fps_menu_open
                 self.pressed_button = None
 
             # RESTART button - hard restart of the whole app so global
@@ -845,26 +895,57 @@ class PygameUI:
                     self.l.restart_app()
                 self.pressed_button = None
 
-            # Undock/Dock Button
-            undock_btn = pygame.Rect(UNDOCK_BUTTON_X, UNDOCK_BUTTON_Y, UNDOCK_BUTTON_WIDTH, UNDOCK_BUTTON_HEIGHT)
-            u_hover = undock_btn.collidepoint(mx, my)
-            btn_text = "DOCK  WINDOWS" if not self.l.docked else "UNDOCK  WINDOWS"
+            # "Separate screens" checkbox. When checked the two scrcpy
+            # windows are floated out of the container as independent
+            # top-level windows - same underlying call as the legacy
+            # UNDOCK/DOCK button, just expressed as a checkbox.
+            sep_row = pygame.Rect(
+                SEPARATE_CHECKBOX_X, SEPARATE_CHECKBOX_Y,
+                SEPARATE_CHECKBOX_WIDTH, SEPARATE_CHECKBOX_HEIGHT,
+            )
+            sep_hover = sep_row.collidepoint(mx, my)
+            # 'separated' is the inverse of docked - keeping the
+            # naming straightforward in the UI.
+            separated = not self.l.docked
+            box_size = SEPARATE_CHECKBOX_BOX_SIZE
+            box_rect = pygame.Rect(
+                sep_row.x, sep_row.centery - box_size // 2, box_size, box_size,
+            )
+            # Subtle row hover highlight
+            if sep_hover:
+                pygame.draw.rect(self.screen, self.colors["panel"], sep_row,
+                                 border_radius=5)
+            # Box: filled accent if checked, outlined panel if not
+            if separated:
+                pygame.draw.rect(self.screen, self.colors["accent"], box_rect,
+                                 border_radius=4)
+                # White checkmark
+                cx_box = box_rect.centerx
+                cy_box = box_rect.centery
+                check_pts = [
+                    (cx_box - 6, cy_box + 1),
+                    (cx_box - 1, cy_box + 6),
+                    (cx_box + 7, cy_box - 5),
+                ]
+                pygame.draw.lines(self.screen, WHITE_TEXT, False, check_pts, 3)
+            else:
+                pygame.draw.rect(self.screen, self.colors["panel"], box_rect,
+                                 border_radius=4)
+                pygame.draw.rect(self.screen, self.colors["border"], box_rect, 2,
+                                 border_radius=4)
+            # Label
+            sep_label = self.font_md.render("Separate screens", True, self.colors["text"])
+            self.screen.blit(
+                sep_label,
+                (box_rect.right + 10, sep_row.centery - sep_label.get_height() // 2),
+            )
 
-            btn_color = self.colors["panel"]
-            text_color = self.colors["text"]
-
-            pygame.draw.rect(self.screen, btn_color, undock_btn, border_radius=5)
-            utxt = self.font_md.render(btn_text, True, text_color)
-            text_rect = utxt.get_rect(center=undock_btn.center)
-            self.screen.blit(utxt, text_rect)
-
-            # Dock button logic
-            if m_click and u_hover and not self.m_locked and not self.dragging:
-                self.pressed_button = "dock"
-
-            if not m_click and self.pressed_button == "dock":
-                if u_hover:
-                    logger.info("Dock toggle button clicked")
+            # Click handling - same toggle_dock() call as the old button
+            if m_click and sep_hover and not self.m_locked and not self.dragging:
+                self.pressed_button = "separate"
+            if not m_click and self.pressed_button == "separate":
+                if sep_hover:
+                    logger.info("Separate-screens checkbox clicked")
                     self.l.toggle_dock()
                 self.pressed_button = None
 
@@ -1090,6 +1171,81 @@ class PygameUI:
                         )
                         self.show_status("Failed to save preset", "error")
                         self.m_locked = True
+
+            # FPS dropdown overlay. Drawn LAST so it visually stacks
+            # on top of any other widget that happens to sit below
+            # the FPS button. Also intercepts mouse so a stray click
+            # outside any item just closes the menu.
+            if self._fps_menu_open:
+                try:
+                    from src.launcher import ALLOWED_FPS_VALUES
+                except Exception:
+                    ALLOWED_FPS_VALUES = (30, 60, 90, 120)
+
+                menu_x = FPS_BUTTON_X
+                menu_y = FPS_BUTTON_Y + FPS_BUTTON_HEIGHT + 2
+                item_h = FPS_MENU_ITEM_HEIGHT
+                pad = FPS_MENU_PADDING
+                menu_w = FPS_BUTTON_WIDTH
+                menu_h = pad * 2 + item_h * len(ALLOWED_FPS_VALUES)
+                menu_rect = pygame.Rect(menu_x, menu_y, menu_w, menu_h)
+
+                # Drop shadow + filled menu
+                shadow = pygame.Rect(menu_x + 2, menu_y + 4, menu_w, menu_h)
+                pygame.draw.rect(self.screen, (0, 0, 0), shadow,
+                                 border_radius=PRESET_BORDER_RADIUS)
+                pygame.draw.rect(self.screen, self.colors["panel"], menu_rect,
+                                 border_radius=PRESET_BORDER_RADIUS)
+                pygame.draw.rect(self.screen, self.colors["border"], menu_rect, 1,
+                                 border_radius=PRESET_BORDER_RADIUS)
+
+                clicked_in_item = False
+                for i, fps_val in enumerate(ALLOWED_FPS_VALUES):
+                    item_rect = pygame.Rect(
+                        menu_x + pad,
+                        menu_y + pad + i * item_h,
+                        menu_w - pad * 2,
+                        item_h,
+                    )
+                    item_hover = item_rect.collidepoint(mx, my)
+                    is_current = (fps_val == current_fps)
+                    if is_current:
+                        face = self.colors["accent"]
+                        txt_color = WHITE_TEXT
+                    elif item_hover:
+                        face = self.colors["border"]
+                        txt_color = self.colors["text"]
+                    else:
+                        face = self.colors["panel"]
+                        txt_color = self.colors["text"]
+                    pygame.draw.rect(self.screen, face, item_rect, border_radius=3)
+                    label = f"{fps_val} FPS"
+                    if is_current:
+                        label += "  *"
+                    item_text = self.font_md.render(label, True, txt_color)
+                    self.screen.blit(item_text, item_text.get_rect(center=item_rect.center))
+
+                    if item_hover and m_click and not self.m_locked and not self.dragging:
+                        self.pressed_button = f"fps_item_{fps_val}"
+                    if not m_click and self.pressed_button == f"fps_item_{fps_val}":
+                        if item_hover:
+                            if hasattr(self.l, "set_max_fps"):
+                                self.l.set_max_fps(fps_val)
+                            self.show_status(
+                                f"FPS set to {fps_val} (click RESTART to apply)", "info",
+                            )
+                            self._fps_menu_open = False
+                            clicked_in_item = True
+                        self.pressed_button = None
+
+                # Click somewhere off-menu (and not on the FPS button itself)
+                # closes the menu without changing anything.
+                if (not clicked_in_item
+                        and m_click and not self.m_locked
+                        and not menu_rect.collidepoint(mx, my)
+                        and not fps_btn.collidepoint(mx, my)
+                        and self.pressed_button is None):
+                    self._fps_menu_open = False
 
             # Release mouse lock
             if not m_click:
