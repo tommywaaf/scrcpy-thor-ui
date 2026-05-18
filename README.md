@@ -19,9 +19,11 @@
 </p>
 
 > **Quick start (no Python needed):** grab `scrcpy-thor-ui.exe` from the
-> [latest release](https://github.com/tommywaaf/scrcpy-thor-ui/releases/latest),
-> drop it next to the bundled `bin/`, `config/` and `logs/` folders
-> from this repo, and double-click it.
+> [latest release](https://github.com/tommywaaf/scrcpy-thor-ui/releases/latest)
+> and double-click it. The .exe is fully self-contained — `scrcpy.exe`,
+> `adb.exe` and the supporting DLLs are bundled inside it. The first
+> launch creates `config/` and `logs/` folders next to the .exe for
+> your settings and rotated log files.
 
 scrcpy-thor-ui mirrors both screens of the AYN Thor to your Windows
 desktop and draws a real-time virtual controller around the bottom
@@ -119,8 +121,9 @@ pip install pyinstaller
 python build.py
 ```
 
-Output appears at `dist/scrcpy-thor-ui.exe`. Place the executable in
-a folder that also contains `bin/`, `config/` and `logs/`.
+Output appears at `dist/scrcpy-thor-ui.exe`. The bundle is
+self-contained — you can move the .exe anywhere on disk. `config/`
+and `logs/` will be created next to it on first run.
 
 ### Option 3 — Pre-built release
 
