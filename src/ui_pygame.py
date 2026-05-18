@@ -44,7 +44,9 @@ LOADING_SCREEN_Y = 80
 # Control panel window configuration
 CONTROL_PANEL_OFFSET_X = 460
 CONTROL_PANEL_WIDTH = 450
-CONTROL_PANEL_HEIGHT = 900
+# A bit taller than upstream to accommodate the FPS / RESTART row
+# this fork adds between the layout sliders and the dock buttons.
+CONTROL_PANEL_HEIGHT = 950
 
 # Font sizes
 LARGE_FONT_SIZE = 24
@@ -131,36 +133,48 @@ SLIDER_TOP_Y_Y = 250
 SLIDER_BOTTOM_X_Y = 310
 SLIDER_BOTTOM_Y_Y = 370
 
+# FPS selector + RESTART row (this fork adds a row here between the
+# layout sliders and the dock/screenshot buttons).
+FPS_BUTTON_X = 40
+FPS_BUTTON_Y = 410
+FPS_BUTTON_WIDTH = 180
+FPS_BUTTON_HEIGHT = 36
+
+RESTART_BUTTON_X = 230
+RESTART_BUTTON_Y = 410
+RESTART_BUTTON_WIDTH = 180
+RESTART_BUTTON_HEIGHT = 36
+
 # Dock/Undock button
 UNDOCK_BUTTON_X = 40
-UNDOCK_BUTTON_Y = 415
+UNDOCK_BUTTON_Y = 460
 UNDOCK_BUTTON_WIDTH = 180
 UNDOCK_BUTTON_HEIGHT = 36
 
 # Screenshot button
 SCREENSHOT_BUTTON_X = 230
-SCREENSHOT_BUTTON_Y = 415
+SCREENSHOT_BUTTON_Y = 460
 SCREENSHOT_BUTTON_WIDTH = 180
 SCREENSHOT_BUTTON_HEIGHT = 36
 
 # Wireless button
 WIRELESS_BUTTON_X = 40
-WIRELESS_BUTTON_Y = 460
+WIRELESS_BUTTON_Y = 505
 WIRELESS_BUTTON_WIDTH = 370
 WIRELESS_BUTTON_HEIGHT = 36
 
 STATUS_TEXT_X = 225
-STATUS_TEXT_Y = 505
+STATUS_TEXT_Y = 550
 
 # Preset section layout
-PRESET_DIVIDER_Y = 510
+PRESET_DIVIDER_Y = 555
 PRESET_DIVIDER_LEFT = 20
 PRESET_DIVIDER_RIGHT = 430
 
 PRESET_HEADER_X = 20
-PRESET_HEADER_Y = 530
+PRESET_HEADER_Y = 575
 
-PRESET_Y = 565
+PRESET_Y = 610
 PRESET_HEIGHT = 35
 
 PRESET_INPUT_X = 40
@@ -186,8 +200,8 @@ BLACK_TEXT = (0, 0, 0)
 
 # Preset list layout
 PRESET_LIST_HEADER_X = 20
-PRESET_LIST_HEADER_Y = 625
-PRESET_LIST_Y_OFFSET = 660
+PRESET_LIST_HEADER_Y = 670
+PRESET_LIST_Y_OFFSET = 705
 
 PRESET_ROW_X = 30
 PRESET_ROW_WIDTH = 390
@@ -784,6 +798,52 @@ class PygameUI:
                 "BOTTOM Y", SLIDER_BOTTOM_Y_Y, self.l.by, SCREEN_MIN_POS, SCREEN_MAX_POS,
                 self.colors["bot"], "by"
             )
+
+            # FPS selector (cycles 30 -> 60 -> 120). The slider-style
+            # widgets in this panel are only for layout coords; FPS is
+            # one of three discrete values and a cycling button is
+            # the most space-efficient way to expose it.
+            fps_btn = pygame.Rect(
+                FPS_BUTTON_X, FPS_BUTTON_Y, FPS_BUTTON_WIDTH, FPS_BUTTON_HEIGHT
+            )
+            fps_hover = fps_btn.collidepoint(mx, my)
+            current_fps = getattr(self.l, "max_fps", 60)
+            fps_face = self.colors["panel"] if not fps_hover else self.colors["border"]
+            pygame.draw.rect(self.screen, fps_face, fps_btn, border_radius=PRESET_BORDER_RADIUS)
+            fps_text = self.font_md.render(f"FPS: {current_fps}", True, self.colors["text"])
+            self.screen.blit(fps_text, fps_text.get_rect(center=fps_btn.center))
+
+            if fps_hover and m_click and not self.m_locked and not self.dragging:
+                self.pressed_button = "fps"
+            if not m_click and self.pressed_button == "fps":
+                if fps_hover and hasattr(self.l, "cycle_max_fps"):
+                    new_fps = self.l.cycle_max_fps()
+                    self.show_status(
+                        f"FPS set to {new_fps} (click RESTART to apply)", "info",
+                    )
+                self.pressed_button = None
+
+            # RESTART button - hard restart of the whole app so global
+            # scale and FPS changes take effect cleanly.
+            restart_btn = pygame.Rect(
+                RESTART_BUTTON_X, RESTART_BUTTON_Y,
+                RESTART_BUTTON_WIDTH, RESTART_BUTTON_HEIGHT,
+            )
+            restart_hover = restart_btn.collidepoint(mx, my)
+            r_face = self.colors["warning"] if restart_hover else hex_to_rgb("#c87a0e")
+            pygame.draw.rect(self.screen, r_face, restart_btn, border_radius=PRESET_BORDER_RADIUS)
+            r_text = self.font_md.render("RESTART", True, BLACK_TEXT)
+            self.screen.blit(r_text, r_text.get_rect(center=restart_btn.center))
+
+            if restart_hover and m_click and not self.m_locked and not self.dragging:
+                self.pressed_button = "restart"
+            if not m_click and self.pressed_button == "restart":
+                if restart_hover and hasattr(self.l, "restart_app"):
+                    logger.info("Restart button clicked")
+                    self.show_status("Restarting...", "info", duration=0.5)
+                    pygame.display.flip()
+                    self.l.restart_app()
+                self.pressed_button = None
 
             # Undock/Dock Button
             undock_btn = pygame.Rect(UNDOCK_BUTTON_X, UNDOCK_BUTTON_Y, UNDOCK_BUTTON_WIDTH, UNDOCK_BUTTON_HEIGHT)

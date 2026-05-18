@@ -73,6 +73,10 @@ BOTTOM_SCREEN_DEFAULT_X = 0
 BOTTOM_SCREEN_DEFAULT_Y = 0
 DEFAULT_GLOBAL_SCALE = 0.6
 
+# Allowed scrcpy FPS values exposed in the control panel.
+ALLOWED_FPS_VALUES = (30, 60, 120)
+DEFAULT_MAX_FPS = 60
+
 # Virtual chassis (Phase 1: static button strip art on each side
 # of the bottom screen). The chassis fills the natural gap that
 # already exists between the wider top screen and the narrower
@@ -142,8 +146,17 @@ class Launcher:
             self.config.get("chassis_enabled", DEFAULT_CHASSIS_ENABLED)
         )
 
-        # Initialize Scrcpy with the saved scale
-        self.scrcpy = ScrcpyManager(scale=self.launch_scale)
+        # Configurable FPS cap for the scrcpy stream (30/60/120).
+        # Saved to config so it survives restarts; user-controllable
+        # from the control panel.
+        try:
+            cfg_fps = int(self.config.get("max_fps", DEFAULT_MAX_FPS))
+        except (TypeError, ValueError):
+            cfg_fps = DEFAULT_MAX_FPS
+        self.max_fps = cfg_fps if cfg_fps in ALLOWED_FPS_VALUES else DEFAULT_MAX_FPS
+
+        # Initialize Scrcpy with the saved scale and FPS
+        self.scrcpy = ScrcpyManager(scale=self.launch_scale, max_fps=self.max_fps)
 
         # Calculate the forced layout (Top at 0,0 - bottom centred underneath) with scaled dimensions
         w1, h1 = self.scrcpy.f_w1, self.scrcpy.f_h1
@@ -434,6 +447,57 @@ class Launcher:
         """Force a full background repaint of the container."""
         if self.hwnd_container:
             self.user32.InvalidateRect(self.hwnd_container, None, True)
+
+    def cycle_max_fps(self):
+        """
+        Cycle through the allowed FPS presets (30 -> 60 -> 120 -> 30).
+        Persists to config. Takes effect on the next scrcpy restart;
+        the user is expected to click RESTART afterwards.
+        """
+        try:
+            idx = ALLOWED_FPS_VALUES.index(self.max_fps)
+        except ValueError:
+            idx = ALLOWED_FPS_VALUES.index(DEFAULT_MAX_FPS)
+        new_fps = ALLOWED_FPS_VALUES[(idx + 1) % len(ALLOWED_FPS_VALUES)]
+        self.set_max_fps(new_fps)
+        return new_fps
+
+    def set_max_fps(self, fps):
+        """Set the FPS cap and persist; restart required to take effect."""
+        if fps not in ALLOWED_FPS_VALUES:
+            logger.warning(f"Ignoring out-of-range FPS request: {fps}")
+            return
+        logger.info(f"FPS preference changed: {self.max_fps} -> {fps}")
+        self.max_fps = fps
+        try:
+            self.config.set("max_fps", fps)
+        except Exception as FpsSaveError:
+            logger.warning(f"Failed to persist max_fps: {FpsSaveError}")
+        # Update the live ScrcpyManager so a restart picks it up.
+        if hasattr(self, "scrcpy"):
+            self.scrcpy.max_fps = fps
+
+    def restart_app(self):
+        """
+        Restart the entire application. Spawns a fresh main.py (or
+        the bundled exe under PyInstaller) and exits this process.
+        Used by the control panel after global-scale or FPS changes.
+        """
+        import subprocess
+        import sys
+        try:
+            if getattr(sys, "frozen", False):
+                cmd = [sys.executable]
+            else:
+                cmd = [sys.executable, "main.py"]
+            logger.info(f"Restarting application: {' '.join(cmd)}")
+            subprocess.Popen(cmd, cwd=os.getcwd())
+        except Exception as RestartSpawnError:
+            logger.error(f"Failed to spawn restart process: {RestartSpawnError}",
+                         exc_info=True)
+            return
+        # Now tear ourselves down (this calls os._exit(0) at the end).
+        self.stop()
 
     def toggle_chassis(self):
         """

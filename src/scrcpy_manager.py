@@ -113,17 +113,22 @@ class ScrcpyManager:
     resolution and process management and shutdown
     """
 
-    def __init__(self, scale=DEFAULT_UI_SCALING, scrcpy_bin=None, adb_bin=None, enable_audio_top=True):
+    def __init__(self, scale=DEFAULT_UI_SCALING, scrcpy_bin=None, adb_bin=None,
+                 enable_audio_top=True, max_fps=int(DEFAULT_MAX_FPS)):
         """
         Initialize the scrcpy manager.
         """
-        logger.info(f"Initializing ScrcpyManager (scale={scale}, audio={enable_audio_top})")
+        logger.info(
+            f"Initializing ScrcpyManager (scale={scale}, audio={enable_audio_top}, fps={max_fps})"
+        )
 
         self.scale = scale
         self.processes = []
         self.serial = None
         self.enable_audio_top = enable_audio_top
         self.connection_mode = None
+        # Configurable per-instance FPS cap (override the module default)
+        self.max_fps = int(max_fps) if max_fps else int(DEFAULT_MAX_FPS)
 
         # Calculate top screen resolution based on scale
         base_w1 = TOP_SCREEN_BASE_WIDTH
@@ -590,7 +595,7 @@ class ScrcpyManager:
             "--window-title", window_title,
             "--max-size", f"{width}",
             "--video-bit-rate", bitrate_str,
-            "--max-fps", DEFAULT_MAX_FPS,
+            "--max-fps", str(self.max_fps),
             "--render-driver", DEFAULT_RENDER_DRIVER,
             "--video-codec", DEFAULT_VIDEO_CODEC,
             # low-latency=1 makes the Android MediaCodec encoder skip

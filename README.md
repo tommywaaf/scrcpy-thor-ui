@@ -2,39 +2,65 @@
   <img src="assets/icon.png" alt="ThorCPY Logo" width="250">
 </p>
 
-# ThorCPY
+# ThorCrcpyButtons
 
-ThorCPY *(Pronounced "Thor Copy")* is a Windows-based multi-window Scrcpy launcher, designed specifically for the AYN Thor.
-It features a layout editor, window docking, screenshots, and window moving.
+> **Fork notice.** This is a downstream fork of the excellent
+> [ThorCPY](https://github.com/theswest/ThorCPY) by *the_swest* with a
+> handful of additions geared at making it look and feel more like a
+> real AYN Thor on the desktop. Upstream ThorCPY remains the canonical
+> project for the underlying dual-screen mirroring; please read its
+> README too.
 
-It launches two scrcpy windows (one for each display), and embeds them into a native windows container.
-Designed for screensharing, recording or livestreaming.
+ThorCrcpyButtons is a Windows-based multi-window Scrcpy launcher,
+designed specifically for the AYN Thor. It launches two scrcpy windows
+(one for each display), embeds them into a native Windows container,
+and adds a procedurally-drawn virtual button overlay around the bottom
+screen that animates in real time with whatever you're doing on the
+device.
 
-**ThorCPY is primarily designed for Windows 11. It will work on Windows 10, however bugs may occur!**
+**Primarily designed for Windows 11. Windows 10 (1809+) should work but bugs may occur.**
 
-**For Linux users, please use the Linux Port: https://github.com/DrSkyfaR/ThorCPY-Linux**
-
-Please report any issues at https://github.com/theswest/ThorCPY/issues
+**For Linux users, please use the upstream Linux port:**
+**https://github.com/DrSkyfaR/ThorCPY-Linux**
 
 | Main UI                             | ThorCPY Screenshot                             |
 |-------------------------------------|------------------------------------------------|
 | ![](assets/screenshots/main_ui.png) | ![](assets/screenshots/ThorCPY-Screenshot.png) |
 
 
-## Features:
+## What this fork adds on top of ThorCPY:
 
-- Custom dual-screen support built for the AYN Thor, allowing both wired and wireless connections
-- Dock screenshares in a window, or separate them for specific screen captures
-- Layout presets allow you to display the screens precisely the way you want
-- Screenshot capture takes a beautiful screenshot of both screens, including transparency where the screens aren't!
-- Real-time positioning allows you to move the screens around into whatever position you want
+- **Virtual button overlay (chassis)** drawn into the empty space on
+  each side of the bottom screen, matching the AYN Thor button layout:
+  - Left strip (top → bottom): L1 / L2 LEDs, SELECT, left joystick, D-pad, HOME
+  - Right strip (top → bottom): R1 / R2 LEDs, START, X / Y / B / A cluster, right joystick, BACK
+  - Face buttons follow the Thor silkscreen: X top, A right, B bottom, Y left
+- **Live input animation** via `adb shell getevent` from the Thor's
+  *Odin Controller* node. Every press, release, axis movement and
+  trigger pull is reflected in the overlay in real time — pills
+  darken, ABXY circles dim, joystick caps offset by stick position,
+  D-pad arms light up, L1/L2/R1/R2 LEDs glow red.
+- **In-app FPS selector (30 / 60 / 120)** for the scrcpy stream.
+- **Soft-restart button** in the control panel so you can apply scale
+  or FPS changes without hand-killing the process.
+- **`BUTTONS  ON / OFF` toggle** on the control panel that hides or
+  shows the overlay at runtime; state persists in `config/config.json`.
+- **Performance pass on the scrcpy pipeline:** H.265 codec with the
+  MediaCodec `low-latency=1` option, 60 fps default, `direct3d`
+  render driver, `HIGH_PRIORITY_CLASS` for both scrcpy children, and
+  a fix for the stdout/stderr `PIPE` buffer deadlock that previously
+  caused intermittent stutter under load.
+- **Window-sync optimisations:** geometry cache + removal of
+  `SWP_NOCOPYBITS` so the embedded scrcpy windows aren't repainted
+  60×/sec when the layout is static.
 
-Technical Features:
-- Comprehensive logging
-- Automatic device detection via ADB
-- Thread-safe window managing
-- Graceful error handling and recovery
-- PyInstaller support for standalone executables
+## Original ThorCPY features (unchanged here):
+
+- Custom dual-screen support for the AYN Thor (wired or wireless)
+- Dock or undock the screenshares for individual capture
+- Layout presets for precise window placement
+- Beautiful dual-screen clipboard screenshots with transparency
+- Real-time positioning sliders
 
 ## Installation:
 
