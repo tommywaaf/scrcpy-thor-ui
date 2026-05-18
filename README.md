@@ -24,11 +24,6 @@
 > inside the unzipped folder. `scrcpy.exe`, `adb.exe`, the supporting
 > DLLs and all assets ship inside `_internal/`. `config/` and `logs/`
 > are created next to the .exe on first launch.
->
-> *(We ship a folder-based build instead of a single-file `.exe`
-> because Windows Defender real-time-scans the contents of one-file
-> exes on every launch, which caused noticeable audio/video stutter.
-> Folder builds get scanned once and then run at full speed.)*
 
 scrcpy-thor-ui mirrors both screens of the AYN Thor to your Windows
 desktop and draws a real-time virtual controller around the bottom
