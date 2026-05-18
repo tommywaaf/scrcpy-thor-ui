@@ -307,6 +307,15 @@ class InputListener:
                     norm = max(0.0, min(1.0, (raw - vmin) / span))
                 if abs(norm) < dz:
                     norm = 0.0
+                # Quantize stick + trigger values to coarse 0.05 steps.
+                # Hall-effect sticks emit constant micro-changes even at
+                # rest (raw values shifting by tiny amounts). Without
+                # quantization, every tiny shift triggers a chassis
+                # rebuild downstream, which dominated host CPU during
+                # active gameplay. 0.05 = 41 distinct values across the
+                # full -1..1 range, far more than the eye can resolve
+                # for a stick cap that's only ~30 px in radius.
+                norm = round(norm * 20.0) / 20.0
                 with self._lock:
                     if self._state.get(key) != norm:
                         self._state[key] = norm

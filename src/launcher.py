@@ -38,6 +38,68 @@ from src.wireless_dialog import show_wireless_dialog
 from src.chassis import ChassisRenderer, surface_to_hbitmap
 from src.input_listener import InputListener
 
+
+def _create_top_down_dib(width, height):
+    """
+    Allocate a 32-bit top-down DIB that we can update in-place by
+    writing into the returned bits pointer. Used for the chassis
+    bitmap so we don't pay CreateDIBSection / DeleteObject costs on
+    every input change.
+
+    Returns (hbitmap, bits_ptr). Caller owns the HBITMAP and must
+    DeleteObject() it when done. Pixel format is BGRA, 4 bytes per
+    pixel, top-down (negative biHeight).
+    """
+    class _BMI_HEADER(ctypes.Structure):
+        _fields_ = [
+            ("biSize", wintypes.DWORD),
+            ("biWidth", wintypes.LONG),
+            ("biHeight", wintypes.LONG),
+            ("biPlanes", wintypes.WORD),
+            ("biBitCount", wintypes.WORD),
+            ("biCompression", wintypes.DWORD),
+            ("biSizeImage", wintypes.DWORD),
+            ("biXPelsPerMeter", wintypes.LONG),
+            ("biYPelsPerMeter", wintypes.LONG),
+            ("biClrUsed", wintypes.DWORD),
+            ("biClrImportant", wintypes.DWORD),
+        ]
+
+    class _BMI(ctypes.Structure):
+        _fields_ = [
+            ("bmiHeader", _BMI_HEADER),
+            ("bmiColors", wintypes.DWORD * 3),
+        ]
+
+    bmi = _BMI()
+    bmi.bmiHeader.biSize = ctypes.sizeof(_BMI_HEADER)
+    bmi.bmiHeader.biWidth = width
+    bmi.bmiHeader.biHeight = -height  # top-down
+    bmi.bmiHeader.biPlanes = 1
+    bmi.bmiHeader.biBitCount = 32
+    bmi.bmiHeader.biCompression = 0  # BI_RGB
+
+    gdi32 = ctypes.windll.gdi32
+    user32 = ctypes.windll.user32
+    gdi32.CreateDIBSection.argtypes = [
+        wintypes.HDC, ctypes.POINTER(_BMI), wintypes.UINT,
+        ctypes.POINTER(ctypes.c_void_p), wintypes.HANDLE, wintypes.DWORD,
+    ]
+    gdi32.CreateDIBSection.restype = wintypes.HBITMAP
+
+    bits_ptr = ctypes.c_void_p()
+    screen_dc = user32.GetDC(0)
+    try:
+        hbitmap = gdi32.CreateDIBSection(
+            screen_dc, ctypes.byref(bmi), 0,
+            ctypes.byref(bits_ptr), None, 0,
+        )
+    finally:
+        user32.ReleaseDC(0, screen_dc)
+    if not hbitmap or not bits_ptr.value:
+        raise RuntimeError("CreateDIBSection failed")
+    return hbitmap, bits_ptr
+
 logger = logging.getLogger(__name__)
 
 # Win32 window message constants
@@ -185,6 +247,10 @@ class Launcher:
         self._input_dirty = threading.Event()
         # Last time we rebuilt the chassis bitmap, used for throttling.
         self._last_chassis_redraw = 0.0
+        # Hash of the last button state we actually rendered. If the
+        # next snapshot hashes to the same value we skip the rebuild
+        # entirely (no new pixels to push).
+        self._last_chassis_state_key = None
 
         # When chassis is on AND the user has ticked "Separate screens",
         # we float ONLY the top scrcpy window and keep the bottom one
@@ -195,9 +261,17 @@ class Launcher:
         self._original_container_w = 0
         self._original_container_h = 0
         # Min interval between chassis redraws while inputs are streaming.
-        # 33 ms ~= 30 fps which is plenty smooth for joystick movement
-        # without melting CPU when an axis fires every few ms.
-        self._chassis_redraw_min_interval = 1.0 / 30.0
+        # 15 fps is more than enough for the overlay - reduces host CPU
+        # by half versus the previous 30 fps target.
+        self._chassis_redraw_min_interval = 1.0 / 15.0
+        # Persistent DIB bits pointer so we can write new pixel data
+        # into the existing bitmap instead of CreateDIBSection-ing a
+        # new one every time the state changes.
+        self._chassis_dib_bits = None
+        # Cached side-strip rectangles (left and right) so the paint
+        # handler can BitBlt only those regions instead of the whole
+        # 1.5 MP container bitmap.
+        self._chassis_strip_rects = None
 
         # Single persistent tkinter root so all dialogs use it as their parent without corrupting control window's state
         self._tk_root = tk.Tk()
@@ -348,14 +422,20 @@ class Launcher:
 
     def _build_chassis_bitmap(self):
         """
-        Render the chassis surface and convert to a Win32 HBITMAP.
+        Render the chassis surface and update the on-disk DIB so the
+        next paint copies fresh pixels.
+
+        Two fast paths:
+          1. If neither the container size nor the cached renderer
+             changed, we reuse the same DIB and just memcpy new pixel
+             data into its bits - no CreateDIBSection / DeleteObject
+             churn each frame.
+          2. The renderer object is cached too so font lookups and
+             internal pygame state survive across rebuilds.
 
         IMPORTANT: pygame is not thread-safe. This method must run on
         the same thread that owns the rest of pygame (the main thread
-        that runs launch()'s event loop). It is NEVER safe to call
-        from inside the wndproc, because the wndproc runs on the
-        container's worker thread and would race with the control
-        panel's pygame draws.
+        that runs launch()'s event loop).
         """
         if not self.chassis_enabled:
             return False
@@ -369,11 +449,6 @@ class Launcher:
         ch = rect.bottom - rect.top
         if cw <= 0 or ch <= 0:
             return False
-
-        if (self._chassis_hbitmap is not None
-                and self._chassis_w == cw
-                and self._chassis_h == ch):
-            return True
 
         try:
             bottom_h = self.scrcpy.f_h2
@@ -390,22 +465,49 @@ class Launcher:
                 cw - (self.bx + self.scrcpy.f_w2),
                 bottom_h,
             )
-            logger.info(
-                f"Building chassis bitmap container=({cw}x{ch}) "
-                f"left_strip={left_strip} right_strip={right_strip}"
+            self._chassis_strip_rects = (left_strip, right_strip)
+
+            dimensions_changed = (
+                self._chassis_renderer is None
+                or self._chassis_w != cw
+                or self._chassis_h != ch
             )
-            self._chassis_renderer = ChassisRenderer(cw, ch, left_strip, right_strip)
+
+            if dimensions_changed:
+                logger.info(
+                    f"Building chassis bitmap container=({cw}x{ch}) "
+                    f"left_strip={left_strip} right_strip={right_strip}"
+                )
+                self._chassis_renderer = ChassisRenderer(cw, ch, left_strip, right_strip)
+                self._chassis_w = cw
+                self._chassis_h = ch
+                # Drop the previous DIB - dimensions changed.
+                if self._chassis_hbitmap:
+                    try:
+                        ctypes.windll.gdi32.DeleteObject(self._chassis_hbitmap)
+                    except Exception:
+                        pass
+                    self._chassis_hbitmap = None
+                    self._chassis_dib_bits = None
+            else:
+                # Same dimensions - just rewire strip rects on the
+                # cached renderer and reuse it.
+                import pygame
+                self._chassis_renderer.left_strip = pygame.Rect(*left_strip)
+                self._chassis_renderer.right_strip = pygame.Rect(*right_strip)
+
             surf = self._chassis_renderer.render(self._chassis_button_state)
 
-            # Drop previous bitmap if any
-            if self._chassis_hbitmap:
-                ctypes.windll.gdi32.DeleteObject(self._chassis_hbitmap)
-                self._chassis_hbitmap = None
+            if self._chassis_hbitmap is None:
+                # First build OR dimensions changed: allocate a fresh DIB.
+                hbitmap, bits_ptr = _create_top_down_dib(cw, ch)
+                self._chassis_hbitmap = hbitmap
+                self._chassis_dib_bits = bits_ptr
 
-            hbitmap, w, h = surface_to_hbitmap(surf)
-            self._chassis_hbitmap = hbitmap
-            self._chassis_w = w
-            self._chassis_h = h
+            # Update the existing DIB's pixel buffer in place.
+            import pygame
+            raw = pygame.image.tostring(surf, "BGRA", False)
+            ctypes.memmove(self._chassis_dib_bits, raw, len(raw))
             return True
         except Exception as ChassisRenderError:
             logger.error(f"Failed to render chassis: {ChassisRenderError}", exc_info=True)
@@ -436,9 +538,29 @@ class Launcher:
             try:
                 old = gdi32.SelectObject(hdc_mem, self._chassis_hbitmap)
                 try:
-                    # SRCCOPY = 0x00CC0020
-                    gdi32.BitBlt(hdc_dst, 0, 0, self._chassis_w, self._chassis_h,
-                                 hdc_mem, 0, 0, 0x00CC0020)
+                    SRCCOPY = 0x00CC0020
+                    strip_rects = self._chassis_strip_rects
+                    if strip_rects:
+                        # Fast path: only blit the two side strip
+                        # regions where the chassis is actually drawn.
+                        # The top + bottom screen areas are covered
+                        # by the embedded scrcpy children (and by
+                        # WS_CLIPCHILDREN clipping), so blitting them
+                        # would just be wasted pixel traffic.
+                        for sx, sy, sw, sh in strip_rects:
+                            if sw > 0 and sh > 0:
+                                gdi32.BitBlt(
+                                    hdc_dst, sx, sy, sw, sh,
+                                    hdc_mem, sx, sy, SRCCOPY,
+                                )
+                    else:
+                        # First-paint fallback before strip rects are
+                        # populated: copy the whole bitmap so the
+                        # initial frame still shows up.
+                        gdi32.BitBlt(
+                            hdc_dst, 0, 0, self._chassis_w, self._chassis_h,
+                            hdc_mem, 0, 0, SRCCOPY,
+                        )
                 finally:
                     gdi32.SelectObject(hdc_mem, old)
             finally:
@@ -571,6 +693,12 @@ class Launcher:
                 self._chassis_hbitmap = None
                 self._chassis_w = 0
                 self._chassis_h = 0
+            # Reset cached renderer / DIB bits / strip rects so a
+            # later toggle-on rebuilds a fresh state.
+            self._chassis_renderer = None
+            self._chassis_dib_bits = None
+            self._chassis_strip_rects = None
+            self._last_chassis_state_key = None
 
         self._invalidate_chassis()
 
@@ -587,6 +715,17 @@ class Launcher:
         last repaint AND the throttle window has elapsed, regenerate
         the chassis bitmap from the latest button state and force the
         container to repaint.
+
+        Optimisations on the hot path:
+          * Hash-dedup: if the snapshot hashes to the same value as
+            the last render, skip the rebuild + invalidate entirely.
+            This catches cases where the input listener fires events
+            that don't actually change the visible state (e.g. a
+            quantized stick value that's stuck on the same step).
+          * Targeted InvalidateRect on just the side-strip rectangles
+            instead of the whole client area. The OS won't bother
+            erasing/repainting any region we didn't invalidate, so
+            the embedded scrcpy children are left strictly alone.
         """
         if not (self.chassis_enabled and self._input_listener and self.hwnd_container):
             return
@@ -596,17 +735,45 @@ class Launcher:
         if now - self._last_chassis_redraw < self._chassis_redraw_min_interval:
             return
 
-        # Consume the dirty flag and capture the latest snapshot. If
-        # more events arrive while we're rendering, the flag will be
-        # re-set and we'll redraw on the next tick.
         self._input_dirty.clear()
-        self._chassis_button_state = self._input_listener.snapshot()
-        # Force a fresh build at the same dimensions.
-        self._chassis_w = 0
-        self._chassis_h = 0
+        snapshot = self._input_listener.snapshot()
+
+        # Cheap signature: tuple of sorted (key, value) pairs. With
+        # axis values quantized to 0.05 steps in the listener, this
+        # changes only on visible state shifts.
+        try:
+            state_key = tuple(sorted(snapshot.items()))
+        except Exception:
+            state_key = None
+
+        if state_key is not None and state_key == self._last_chassis_state_key:
+            # Nothing meaningful changed - skip the rebuild entirely.
+            return
+
+        self._chassis_button_state = snapshot
+        self._last_chassis_state_key = state_key
         if self._build_chassis_bitmap():
-            self._invalidate_chassis()
+            self._invalidate_chassis_strips()
             self._last_chassis_redraw = now
+
+    def _invalidate_chassis_strips(self):
+        """
+        Invalidate only the two side-strip rectangles instead of the
+        entire client area. Pairs with the targeted-blit path in
+        `_paint_chassis_background` to keep WM_PAINT cheap during
+        active gameplay.
+        """
+        if not self.hwnd_container:
+            return
+        strip_rects = self._chassis_strip_rects
+        if not strip_rects:
+            self.user32.InvalidateRect(self.hwnd_container, None, True)
+            return
+        for sx, sy, sw, sh in strip_rects:
+            if sw <= 0 or sh <= 0:
+                continue
+            r = wintypes.RECT(int(sx), int(sy), int(sx + sw), int(sy + sh))
+            self.user32.InvalidateRect(self.hwnd_container, ctypes.byref(r), True)
 
     def _create_container_window(self):
         """
@@ -1091,6 +1258,9 @@ class Launcher:
             except Exception:
                 pass
             self._chassis_hbitmap = None
+        self._chassis_dib_bits = None
+        self._chassis_renderer = None
+        self._chassis_strip_rects = None
 
         # Taskkill the scrcpy
         import subprocess

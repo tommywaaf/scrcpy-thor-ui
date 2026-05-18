@@ -214,6 +214,31 @@ def main():
     except Exception as DpiAwareErr:
         logger.error(f"Could not set DPI Awareness: {DpiAwareErr}")
 
+    # Bump our own process priority to ABOVE_NORMAL_PRIORITY_CLASS.
+    # The two scrcpy children run at HIGH (set in scrcpy_manager) so
+    # we stay below them and don't risk starving the encoder/decoder,
+    # but we sit ABOVE the swarm of NORMAL-priority background apps
+    # (Discord, browsers, IDEs, game launchers) that would otherwise
+    # share CPU with our message pump and chassis renderer. That
+    # sharing is the source of the residual sub-frame audio hiccups.
+    try:
+        from ctypes import wintypes
+        ABOVE_NORMAL_PRIORITY_CLASS = 0x00008000
+        kernel32 = ctypes.windll.kernel32
+        # 64-bit pseudo-handle from GetCurrentProcess() must NOT be
+        # truncated to 32-bit int by ctypes' default signature.
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        kernel32.SetPriorityClass.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel32.SetPriorityClass.restype = wintypes.BOOL
+        current = kernel32.GetCurrentProcess()
+        if kernel32.SetPriorityClass(current, ABOVE_NORMAL_PRIORITY_CLASS):
+            logger.info("Host process priority -> ABOVE_NORMAL")
+        else:
+            err = kernel32.GetLastError()
+            logger.warning(f"SetPriorityClass(ABOVE_NORMAL) failed (GetLastError={err})")
+    except Exception as PriorityErr:
+        logger.warning(f"Could not raise host process priority: {PriorityErr}")
+
     # Create the main launcher object and start it
     logger.info("Initializing launcher")
     app = Launcher()
