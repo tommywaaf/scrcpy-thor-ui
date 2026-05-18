@@ -72,10 +72,19 @@ DEFAULT_RENDER_DRIVER = "direct3d"
 # h265 (HEVC) gives the same visual quality at ~half the bitrate of h264,
 # which directly reduces encode-time, USB traffic and decode latency.
 DEFAULT_VIDEO_CODEC = "h265"
-# Audio latency tuning (milliseconds). Lower = less lag, slightly
-# higher chance of buffer underrun on a busy host.
-DEFAULT_AUDIO_BUFFER_MS = "30"
-DEFAULT_AUDIO_OUTPUT_BUFFER_MS = "5"
+# Audio latency tuning (milliseconds).
+#
+# Tradeoff: lower values give tighter audio sync, but Opus packets
+# from the device's MediaCodec encoder arrive in irregular bursts,
+# especially with dense music or sound-effect-heavy gameplay. If
+# either of these buffers is too small the SDL output queue
+# underruns, which is heard as a brief "click" / brief audio drop
+# and feels like a video micro-stutter because video and audio are
+# A/V-synced. The defaults below give the playback path enough
+# headroom to absorb typical bursts without adding noticeable lag
+# (the human lip-sync threshold is ~80 ms; we stay well under that).
+DEFAULT_AUDIO_BUFFER_MS = "60"
+DEFAULT_AUDIO_OUTPUT_BUFFER_MS = "15"
 
 # Video bitrate calculation constants
 # Scaled down because h265 is roughly 2x more efficient than h264
