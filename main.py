@@ -121,45 +121,79 @@ def show_fatal_error(title: str, message: str):
 
 def check_runtime_structure():
     """
-    Checks that all required folders exist in the application directory.
-    Is used when running from python files and with a pyinstaller exe.
+    Make sure the runtime folders the app expects are present.
+
+    Behaviour depends on how the app is launched:
+
+    * Running from source: bin/, config/ and logs/ MUST already exist
+      next to main.py - we still error out with a fatal dialog if any
+      are missing.
+    * Running as a frozen PyInstaller exe (.exe build): bin/ ships
+      INSIDE the bundle and is unpacked to sys._MEIPASS at startup,
+      so we don't require it next to the executable. config/ and
+      logs/ are user-writable state, so we just create them next to
+      the .exe on demand instead of failing.
     """
     logger = logging.getLogger(__name__)
 
-    # Path logic for pyinstaller exe files
-    if hasattr(sys, "_MEIPASS"):
+    is_frozen = hasattr(sys, "_MEIPASS")
+    if is_frozen:
         base = os.path.dirname(sys.executable)
     else:
         base = os.path.dirname(os.path.abspath(__file__))
 
-    # List the missing files and return an error
-    missing = [f for f in REQUIRED_FOLDERS if not os.path.isdir(os.path.join(base, f))]
+    # When frozen, transparently create the writable folders next to
+    # the executable and skip the bin/ check (it lives in _MEIPASS).
+    if is_frozen:
+        for folder in ("config", "logs"):
+            try:
+                os.makedirs(os.path.join(base, folder), exist_ok=True)
+            except Exception as MkdirError:
+                logger.warning(
+                    f"Could not create runtime folder '{folder}': {MkdirError}"
+                )
+        logger.debug(
+            f"Frozen runtime: bin/ resolves from _MEIPASS={sys._MEIPASS}; "
+            f"config/ and logs/ ensured next to {sys.executable}"
+        )
+        return
 
+    # From-source path: hard fail if anything is missing.
+    missing = [f for f in REQUIRED_FOLDERS if not os.path.isdir(os.path.join(base, f))]
     if missing:
         msg = (
-            f"ThorCPY failed to start.\n\n"
+            f"{__app_name__} failed to start.\n\n"
             f"Missing required folders:\n"
             f"{', '.join(missing)}\n\n"
-            f"ThorCPY must be installed with:\n"
+            f"{__app_name__} must be installed with:\n"
             f"bin/, config/, logs/\n\n"
             f"Please reinstall or extract the full build."
         )
-
-        # Log error and show fatal error, also print to console
         logger.critical(msg)
         print(msg)
-        show_fatal_error("ThorCPY Startup Error", msg)
+        show_fatal_error(f"{__app_name__} Startup Error", msg)
         sys.exit(1)
 
 
 def main():
     """
-    ThorCPY's main entry point
+    Main entry point for scrcpy-thor-ui.
     Sets up logging, checks windows version, runs folder checks, sets DPI awareness,
     creates the launcher instance and starts the UI.
     """
     print(f"Starting {__app_name__} v{__version__}")
     print("Checking system requirements...")
+
+    # When packaged as a PyInstaller exe, the working directory may
+    # be wherever the user double-clicked from (their Desktop, etc).
+    # Anchor all relative paths (config/, logs/) to the exe's own
+    # directory so the app behaves predictably regardless of how it
+    # was launched.
+    if getattr(sys, "frozen", False):
+        try:
+            os.chdir(os.path.dirname(sys.executable))
+        except Exception:
+            pass
 
     # Sets up logging before anything else
     setup_logging()

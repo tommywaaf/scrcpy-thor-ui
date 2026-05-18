@@ -164,23 +164,50 @@ class ScrcpyManager:
 
     def _resolve_bin(self, name):
         """
-        Finds binary in local ./bin folder or system path.
+        Locate a bundled binary (scrcpy / adb).
+
+        Search order:
+          1. PyInstaller bundle (sys._MEIPASS/bin/) when running as a
+             frozen exe - this is what makes the standalone .exe work
+             without the user copying bin/ next to it.
+          2. ./bin next to the running script or exe.
+          3. The current working directory's bin/.
+          4. System PATH.
         """
+        import sys
         logger.debug(f"Resolving binary: {name}")
 
-        # Check local bin folder first
-        local = os.path.join(os.getcwd(), "bin", f"{name}.exe")
-        if os.path.exists(local):
-            logger.info(f"Found {name} in local bin folder: {local}")
-            return local
+        candidates = []
 
-        # Fallback to system PATH
+        # 1) PyInstaller _MEIPASS unpacked bundle
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            candidates.append(os.path.join(meipass, "bin", f"{name}.exe"))
+
+        # 2) ./bin next to the script/exe
+        if getattr(sys, "frozen", False):
+            exe_dir = os.path.dirname(sys.executable)
+        else:
+            exe_dir = os.path.dirname(os.path.abspath(__file__))
+            # src/ -> project root
+            exe_dir = os.path.dirname(exe_dir)
+        candidates.append(os.path.join(exe_dir, "bin", f"{name}.exe"))
+
+        # 3) cwd
+        candidates.append(os.path.join(os.getcwd(), "bin", f"{name}.exe"))
+
+        for path in candidates:
+            if os.path.exists(path):
+                logger.info(f"Found {name} at: {path}")
+                return path
+
+        # 4) system PATH
         found = shutil.which(name)
         if found:
             logger.info(f"Found {name} in system PATH: {found}")
             return found
 
-        logger.warning(f"Binary '{name}' not found in local bin or system PATH")
+        logger.warning(f"Binary '{name}' not found (checked: {candidates})")
         return None
 
     def _is_wireless_serial(self, serial):
