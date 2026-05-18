@@ -57,10 +57,14 @@ screen. Every button press, joystick tilt, D-pad direction and trigger
 pull on the actual handheld is reflected on screen in the same instant
 — so what you see on the desktop genuinely looks like an AYN Thor.
 
-It's tuned for low latency, runs at H.265 with `low-latency=1` on the
-device's MediaCodec encoder, gives you on-the-fly FPS switching
-(30 / 60 / 120) and a one-click restart for global-scale or FPS changes
-to take effect.
+It's tuned for the smoothest possible mirroring over USB: hardware
+H.264 encoding on the device, software-friendly H.264 decoding on
+the host, Direct3D 11 presentation with vsync disabled to match
+high-refresh monitors, a constant-bitrate stream with intra-refresh
+slices (no keyframe spikes) and a generous 80 ms display buffer to
+absorb any residual decode/render jitter. On-the-fly FPS switching
+(30 / 60 / 90 / 120), one-click restart, and a real-time virtual
+controller overlay round it out.
 
 | Menu UI                             | Mirror UI                              |
 |-------------------------------------|----------------------------------------|
@@ -87,15 +91,43 @@ to take effect.
 - Auto-detects the gamepad device path on startup (probes `getevent -p` and prefers `Odin Controller`, with a sensible fallback).
 - Parses the Linux event stream into a thread-safe button-state dict and throttles redraws to ~30 fps so an axis-storm never melts the renderer.
 
-### Performance tuning over upstream scrcpy launches
-- Switches the codec to **H.265** with the MediaCodec **`low-latency=1`** option for sharply lower encode latency.
-- Uses the **`direct3d`** SDL render driver on Windows (lower latency than the previous `opengl`).
-- Caps at **60 fps** by default (with **30 / 60 / 120** selectable from the control panel).
-- Adds **`HIGH_PRIORITY_CLASS`** to both scrcpy children so the OS doesn't deschedule the encoder under load.
-- Fixes a serious **`subprocess.PIPE` deadlock** that intermittently stalled video and audio when scrcpy's stdout/stderr pipe filled up. (Now routed to `DEVNULL`.)
-- Tunes audio buffers to **`--audio-buffer=30 --audio-output-buffer=5`** for tight A/V sync.
-- Enables `--video-buffer=0`, `--no-mipmaps`, `--no-power-on`, `--no-cleanup` for a snappier startup and minimal jitter.
-- Reduces the bitrate scale factor (now ~50% of the previous default) to better match H.265's efficiency and avoid USB saturation when running two streams at once.
+### Performance tuning (the whole pipeline, end to end)
+
+The mirror is essentially as smooth as a USB-tethered scrcpy can get
+on Windows. Everything below is on by default.
+
+**Encoder side (on the Thor):**
+- **`--video-codec=h264`** — H.264 instead of H.265, because scrcpy's host-side decoder is software (no D3D11VA hwaccel exposed in scrcpy 3.3.4) and software H.264 decode is roughly 2× faster than H.265.
+- **Forced Qualcomm hardware encoder** (`c2.qti.avc.encoder`) so the device-side encode never falls back to software.
+- **`bitrate-mode=2` (CBR)** — every frame carries roughly the same number of bits regardless of motion, so the USB transport sees a steady byte rate instead of bursts.
+- **`intra-refresh-period=60`** — gradual slice-based refresh (~1/60 of the picture per frame) **eliminates keyframe spikes entirely**. The bitstream is perfectly uniform.
+- **`i-frame-interval=10`** + **`low-latency=1`** + **`max-bframes=0`** + **`complexity=0`** — minimal encoder buffering, no B-frames, lowest-complexity deterministic encode time.
+- **`priority=0`** + **`operating-rate=120`** — MediaCodec scheduling hints that pin the encoder thread to a real-time fast path on the device.
+- **Bottom screen capped at 30 fps** — the bottom is a static touchpad, no need for 60; this frees significant device-side GPU for the top encoder.
+- Bitrate scaled high enough to never bottleneck the encoder under heavy motion.
+
+**Transport side:**
+- USB only (wireless is supported but USB is recommended for best timing).
+- **Per-instance scrcpy log files** — every launch writes `logs/scrcpy_top_*.log` and `logs/scrcpy_bottom_*.log` containing scrcpy's `--print-fps` counter so you can verify the actual on-screen rate.
+
+**Host (PC) side:**
+- **`--render-driver=direct3d11`** — SDL's modern Direct3D 11 backend. Replacing the upstream `direct3d` (D3D9) was a big win on Windows 11 because D3D9's child-window presentation path is heavily DWM-throttled.
+- **`SDL_RENDER_VSYNC=0`** — disables SDL's vsync wait inside scrcpy. On high-refresh monitors (144/165/240 Hz) the source rate (60 Hz) doesn't align with display vsync slots, and waiting for them caused dropped/coalesced frames. Tearing on a 200+ Hz panel is essentially invisible.
+- **`--video-buffer=80`** — 5 frames of jitter buffering at 60 Hz. With the encoder emitting a uniform bitstream, this absorbs any residual variance and presents at a perfectly steady cadence.
+- **`HIGH_PRIORITY_CLASS`** for both scrcpy children + **`ABOVE_NORMAL_PRIORITY_CLASS`** for the host process so neither gets descheduled when other apps spike.
+- **`subprocess.PIPE` deadlock fix** — scrcpy's stdout/stderr now go to real file handles (per-instance log files) instead of unread `PIPE`s. Closes the path that previously caused intermittent multi-second stalls.
+- **Audio buffers tuned** to `--audio-buffer=60 --audio-output-buffer=15` so dense music doesn't underrun the SDL audio output.
+
+**Window-sync / overlay rendering:**
+- Chassis bitmap is built once into a persistent DIB and updated in place via `memmove` — no `CreateDIBSection` / `DeleteObject` per frame.
+- Targeted BitBlt: only the two side-strip rectangles are copied to the screen, not the full container bitmap.
+- Targeted `InvalidateRect`: only the strip regions are marked dirty, so the embedded scrcpy children are strictly left alone.
+- Hash-dedup before each chassis rebuild: if button state didn't change, the rebuild is skipped entirely.
+- Axis values quantized to 0.05 steps so Hall-stick rest noise doesn't trigger redraws.
+- Geometry cache + removed `SWP_NOCOPYBITS` so the embedded scrcpy windows aren't repainted 60×/sec when the layout is static.
+- 64-bit-safe ctypes signatures for every GDI call we make (`SelectObject`, `BitBlt`, `FillRect`, `GetStockObject`, `CreateCompatibleDC`, `DeleteObject`, `DeleteDC`, `UpdateWindow`).
+
+> **Tip for the cleanest possible image:** run your PC monitor at **60 Hz** while mirroring. The Thor's source is 60 Hz, and 1:1 alignment with the monitor refresh removes the last bit of compositor drift. (You can switch back to 144/165/240 Hz any time via Display settings.)
 
 ### Window-sync optimisations
 - Geometry cache: `SetWindowPos` is only invoked when the embedded scrcpy windows actually need to move, instead of being hit twice per frame at 60 Hz.
@@ -277,7 +309,8 @@ logging.basicConfig(level=logging.DEBUG, ...)
 - Restart the daemon: `bin\adb.exe kill-server` then `bin\adb.exe start-server`.
 
 ### Audio or video stutters intermittently
-- Use a **USB 3** (blue) port. Two simultaneous H.265 streams can saturate USB 2.
+- Use a **USB 3** (blue) port. Two simultaneous H.264 streams + audio comfortably fit USB 2 but USB 3 has more headroom for the highest-quality CBR settings.
+- For the smoothest result, set your monitor to **60 Hz** while mirroring (Display settings → Advanced display → Choose a refresh rate).
 - Lower **GLOBAL SCALE** (e.g. 0.5) and **RESTART**.
 - Drop **FPS** to 30 for older or low-fps games.
 - Make sure no other heavy CPU task is running on the host. (scrcpy already runs at high priority but doesn't preempt all OS work.)

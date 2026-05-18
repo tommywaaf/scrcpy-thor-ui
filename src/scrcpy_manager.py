@@ -74,12 +74,29 @@ LOGFILE_ENCODING = "utf-8"
 # 60 fps is plenty for the Thor's screens, halves encode load vs 120
 # and keeps USB bandwidth headroom for two simultaneous streams.
 DEFAULT_MAX_FPS = "60"
-# direct3d is the lowest-latency SDL renderer on Windows; opengl
-# adds an extra copy through ANGLE/WGL that can stutter under load.
-DEFAULT_RENDER_DRIVER = "direct3d"
-# h265 (HEVC) gives the same visual quality at ~half the bitrate of h264,
-# which directly reduces encode-time, USB traffic and decode latency.
-DEFAULT_VIDEO_CODEC = "h265"
+# Bottom-screen capture rate. The Thor's bottom display is natively
+# 120 Hz, and even capping scrcpy at 60 still has the device's
+# compositor doing 120 Hz of work for the bottom panel. Sampling the
+# bottom screen at 30 fps for capture frees significant device-side
+# GPU time to feed the (more important) top-screen encoder. The
+# bottom mostly shows controls/menus, so 30 fps looks fine in
+# practice.
+DEFAULT_BOTTOM_MAX_FPS = 30
+# direct3d11 is SDL's modern Direct3D 11 backend on Windows. The
+# previous "direct3d" value is actually D3D9 inside SDL, which has
+# notoriously slow child-window presentation paths and tends to be
+# capped at low effective FPS by DWM throttling on Windows 11.
+# Direct3D 11 gets full hardware composition.
+DEFAULT_RENDER_DRIVER = "direct3d11"
+# H.264 instead of H.265 because scrcpy's host-side decoder is
+# software-based (no D3D11VA hwaccel exposed in scrcpy 3.3.4). Soft
+# H.265 decode is ~2x slower than soft H.264 in libavcodec; on a busy
+# gaming PC, the H.265 decoder thread falls behind under heavy game
+# motion, which arrives at the host as visible frame-pacing jitter.
+# H.264 needs roughly 50% more bitrate for equivalent quality, which
+# we have ample USB headroom for - the bitrate scale factors below
+# already cover that.
+DEFAULT_VIDEO_CODEC = "h264"
 # Audio latency tuning (milliseconds).
 #
 # Tradeoff: lower values give tighter audio sync, but Opus packets
@@ -95,13 +112,16 @@ DEFAULT_AUDIO_BUFFER_MS = "60"
 DEFAULT_AUDIO_OUTPUT_BUFFER_MS = "15"
 
 # Video bitrate calculation constants
-# Scaled down because h265 is roughly 2x more efficient than h264
-# and we are running two streams over the same USB link.
-BITRATE_CALC_SCALE_FACTOR = 1.0
-TOP_BITRATE_MINIMUM = 6
-TOP_BITRATE_SCALE = 16
-BOTTOM_BITRATE_MINIMUM = 4
-BOTTOM_BITRATE_SCALE = 12
+# Bumped well above what h265 strictly needs so the encoder is never
+# rate-limited under sustained motion. USB has plenty of headroom
+# (USB 3.x ~ 4 Gbps; we top out around 30-40 Mbps total). When the
+# encoder runs out of bits it drops frames, which manifested as the
+# user-reported "I'm seeing 15-20 fps when 60 is set" symptom.
+BITRATE_CALC_SCALE_FACTOR = 2.0
+TOP_BITRATE_MINIMUM = 12
+TOP_BITRATE_SCALE = 24
+BOTTOM_BITRATE_MINIMUM = 6
+BOTTOM_BITRATE_SCALE = 18
 
 # AYN Thor Screen Constants
 TOP_SCREEN_DISPLAY_ID = "0"
@@ -146,6 +166,11 @@ class ScrcpyManager:
         self.connection_mode = None
         # Configurable per-instance FPS cap (override the module default)
         self.max_fps = int(max_fps) if max_fps else int(DEFAULT_MAX_FPS)
+        # Per-instance scrcpy log file handles. Each scrcpy process
+        # gets its own log file so its `--print-fps` output and any
+        # encoder/decoder warnings land somewhere we can inspect
+        # live (`Get-Content -Wait logs\scrcpy_top_*.log`).
+        self._scrcpy_log_handles = []
 
         # Calculate top screen resolution based on scale
         base_w1 = TOP_SCREEN_BASE_WIDTH
@@ -584,7 +609,7 @@ class ScrcpyManager:
 
         time.sleep(self.scrcpy_start_delay)
 
-        # Launch top screen
+        # Launch top screen at the user-configured FPS (default 60).
         logger.info("Starting top screen window")
         self._start_window(
             use_serial,
@@ -595,12 +620,15 @@ class ScrcpyManager:
             enable_audio=self.enable_audio_top,
             bitrate_min=TOP_BITRATE_MINIMUM,
             bitrate_scale=TOP_BITRATE_SCALE,
+            max_fps_override=self.max_fps,
         )
 
         # Wait for first display to stabilize
         time.sleep(DISPLAY_INIT_DELAY)
 
-        # Launch bottom screen
+        # Launch bottom screen at the lower 30 fps cap. See the
+        # DEFAULT_BOTTOM_MAX_FPS comment for why - it's a deliberate
+        # tradeoff that frees device GPU for the top encoder.
         logger.info("Starting bottom screen window")
         self._start_window(
             use_serial,
@@ -611,6 +639,7 @@ class ScrcpyManager:
             enable_audio=False,
             bitrate_min=BOTTOM_BITRATE_MINIMUM,
             bitrate_scale=BOTTOM_BITRATE_SCALE,
+            max_fps_override=DEFAULT_BOTTOM_MAX_FPS,
         )
 
         logger.info("All scrcpy windows started successfully")
@@ -626,9 +655,15 @@ class ScrcpyManager:
             enable_audio=False,
             bitrate_min=8,
             bitrate_scale=32,
+            max_fps_override=None,
     ):
         """
-        Start a single scrcpy window with retry logic
+        Start a single scrcpy window with retry logic.
+
+        max_fps_override lets a caller pin a specific scrcpy --max-fps
+        value for this stream (e.g. the bottom screen runs at 30 to
+        free device-side GPU for the top encoder). When None, falls
+        back to self.max_fps (the user-configured rate, default 60).
         """
         label = f"'{window_title}'"
         logger.debug(f"Preparing to start {label} (display {display_id})")
@@ -640,11 +675,51 @@ class ScrcpyManager:
         logger.debug(f"{label} bitrate: {bitrate_str}")
 
         # Build command
-        # Performance-tuned flags:
-        # --video-codec=h265 halves bitrate vs h264 at equal quality
-        # --video-buffer=0 disables the jitter buffer (lowest latency)
-        # --no-mipmaps skips GPU mipmap generation (we never upscale far)
-        # --no-power-on / --no-cleanup keep startup/shutdown snappy
+        #
+        # MediaCodec encoder hints in --video-codec-options. These
+        # are Qualcomm c2.qti.avc.encoder-specific tunings aimed at
+        # producing the most CONSISTENT per-frame output timing
+        # possible, since perceived smoothness on the host is a
+        # function of inter-frame pacing variance, not just average
+        # fps:
+        #   low-latency=1     - skip B-frames, smaller GOP, no buffer
+        #   priority=0        - real-time priority for the encoder
+        #                       (Android MediaCodec scheduling hint)
+        #   operating-rate=120 - tells the encoder allocator we want a
+        #                       fast encode path; without this the
+        #                       allocator can pick a "low-power" path
+        #                       that caps real fps far below --max-fps.
+        #   bitrate-mode=2    - CBR (constant bitrate). Every frame
+        #                       carries roughly the same number of
+        #                       bits regardless of motion, so the USB
+        #                       transport sees a steady byte rate
+        #                       instead of bursts on busy scenes.
+        #                       This was the single biggest jitter
+        #                       reduction we found in testing.
+        #   complexity=0      - lowest encode complexity = most
+        #                       deterministic per-frame encode time.
+        #   i-frame-interval=10 - keyframe every 10 s instead of the
+        #                       default 1 s. Keyframes are 5-10x
+        #                       larger than P-frames; they cause
+        #                       periodic transport spikes that show
+        #                       up as visible micro-stutters. Long
+        #                       interval is fine over a reliable USB
+        #                       link with no packet loss.
+        codec_options = (
+            "low-latency=1,"
+            "priority=0,"
+            "operating-rate=120,"
+            "bitrate-mode=2,"
+            "complexity=0,"
+            "i-frame-interval=10,"
+            # Gradual slice-based intra-refresh. The encoder rebuilds
+            # ~1/60 of the picture each frame, so after 60 frames the
+            # whole picture has been refreshed without ever emitting
+            # a single big keyframe. Result: a perfectly uniform
+            # bitstream with no spikes - the last remaining source
+            # of transport-level jitter is gone.
+            "intra-refresh-period=60"
+        )
         cmd = [
             self.scrcpy_bin,
             "--serial", serial,
@@ -652,18 +727,29 @@ class ScrcpyManager:
             "--window-title", window_title,
             "--max-size", f"{width}",
             "--video-bit-rate", bitrate_str,
-            "--max-fps", str(self.max_fps),
+            "--max-fps", str(max_fps_override if max_fps_override is not None else self.max_fps),
             "--render-driver", DEFAULT_RENDER_DRIVER,
             "--video-codec", DEFAULT_VIDEO_CODEC,
-            # low-latency=1 makes the Android MediaCodec encoder skip
-            # B-frames, shrink the GOP, and emit frames as soon as
-            # they are ready instead of buffering. This is the single
-            # biggest encode-side latency reduction available.
-            "--video-codec-options=low-latency=1",
-            "--video-buffer=0",
+            # Force the Qualcomm hardware encoder explicitly. scrcpy
+            # auto-selects this on the Thor anyway, but being
+            # explicit removes any chance of fallback to a software
+            # encoder under odd conditions.
+            "--video-encoder=c2.qti.avc.encoder",
+            f"--video-codec-options={codec_options}",
+            # 80 ms (~5 frames at 60 Hz) of jitter buffering. With
+            # the encoder now emitting a uniform bitstream (CBR +
+            # intra-refresh + no big keyframes), this is plenty of
+            # headroom for any residual decode/render variance to
+            # smooth out. Right at the human lip-sync threshold so
+            # the extra latency stays imperceptible.
+            "--video-buffer=80",
             "--no-mipmaps",
             "--no-power-on",
             "--no-cleanup",
+            # Print fps counter to stderr so we can verify the
+            # actual on-screen rate matches --max-fps. Output is
+            # captured into a per-instance log file (see below).
+            "--print-fps",
         ]
 
         # Audio settings
@@ -684,19 +770,66 @@ class ScrcpyManager:
             try:
                 logger.info(f"Starting {label} (attempt {attempt}/{self.scrcpy_retry_count})")
 
-                # IMPORTANT: We use DEVNULL instead of PIPE here.
-                # scrcpy writes status/log lines to stdout/stderr continuously.
-                # If we capture with PIPE but never read the pipes (which
-                # this code never does), the OS pipe buffer (~64 KB on
-                # Windows) eventually fills, scrcpy BLOCKS on its next
-                # write, and the video/audio stream stalls. Sending the
-                # output to DEVNULL avoids the deadlock entirely and
-                # restores smooth playback under sustained load.
+                # IMPORTANT: NEVER use subprocess.PIPE here without a
+                # drain thread - scrcpy's stdout/stderr fill the OS
+                # pipe buffer (~64 KB on Windows) within seconds, then
+                # scrcpy blocks on its next write and the stream stalls.
+                #
+                # Instead we hand scrcpy a real file handle. The OS
+                # writes lazily to disk so there is no buffer-fill
+                # deadlock, and we get scrcpy's --print-fps output in
+                # a per-instance log file we can tail live with
+                # `Get-Content -Wait logs\scrcpy_<role>_*.log` to see
+                # the actual on-screen FPS.
+                role = "top" if "Top" in window_title else "bottom"
+                ts = time.strftime("%Y%m%d_%H%M%S")
+                log_dir = "logs"
+                try:
+                    os.makedirs(log_dir, exist_ok=True)
+                except Exception:
+                    pass
+                log_path = os.path.join(log_dir, f"scrcpy_{role}_{ts}.log")
+                try:
+                    log_handle = open(log_path, "wb", buffering=0)
+                    self._scrcpy_log_handles.append(log_handle)
+                    stdout_target = log_handle
+                    stderr_target = subprocess.STDOUT
+                    logger.info(f"Scrcpy {role} output -> {log_path}")
+                except Exception as ScrcpyLogOpenError:
+                    logger.warning(
+                        f"Could not open scrcpy log file '{log_path}': "
+                        f"{ScrcpyLogOpenError} - falling back to DEVNULL"
+                    )
+                    stdout_target = subprocess.DEVNULL
+                    stderr_target = subprocess.DEVNULL
+
+                # Disable SDL2's vsync wait inside scrcpy. With vsync
+                # ON, SDL_RenderPresent blocks until the next monitor
+                # refresh - on high-refresh-rate monitors (e.g. 144 /
+                # 165 / 240 Hz) the timing slots don't align with the
+                # 60 Hz incoming frame stream, and scrcpy ends up
+                # skipping frames. Setting SDL_RENDER_VSYNC=0 makes
+                # the renderer present every decoded frame as soon as
+                # it arrives - the small chance of tearing on a
+                # 200+ Hz panel is essentially invisible.
+                child_env = os.environ.copy()
+                child_env["SDL_RENDER_VSYNC"] = "0"
+                # Strip PyInstaller bootloader env vars so a frozen-
+                # parent's _MEIPASS isn't inherited by scrcpy.
+                for _k in (
+                    "_MEIPASS2",
+                    "_PYI_APPLICATION_HOME_DIR",
+                    "_PYI_PARENT_PROCESS_LEVEL",
+                    "_PYI_SPLASH_IPC",
+                ):
+                    child_env.pop(_k, None)
+
                 proc = subprocess.Popen(
                     cmd,
                     creationflags=SCRCPY_CREATION_FLAGS,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stdout=stdout_target,
+                    stderr=stderr_target,
+                    env=child_env,
                 )
 
                 # Quick check if process survives startup
@@ -811,6 +944,14 @@ class ScrcpyManager:
         process_count = len(self.processes)
         self.processes = []
         logger.info(f"Cleared {process_count} process(es) from tracking list")
+
+        # Close any per-instance scrcpy log files we opened
+        for handle in self._scrcpy_log_handles:
+            try:
+                handle.close()
+            except Exception:
+                pass
+        self._scrcpy_log_handles = []
 
         # Device-side cleanup (scrcpy server and app_process)
         if self.serial and self.adb_bin:

@@ -419,6 +419,16 @@ class Launcher:
             wintypes.HDC, ctypes.c_int, ctypes.c_int, wintypes.DWORD,
         ]
         gdi32.BitBlt.restype = wintypes.BOOL
+        # Stock-object lookup + FillRect handles need 64-bit-safe
+        # signatures or the BUTTONS=OFF black-fill silently no-ops.
+        gdi32.GetStockObject.argtypes = [ctypes.c_int]
+        gdi32.GetStockObject.restype = wintypes.HGDIOBJ
+        self.user32.FillRect.argtypes = [
+            wintypes.HDC, ctypes.POINTER(wintypes.RECT), wintypes.HBRUSH,
+        ]
+        self.user32.FillRect.restype = ctypes.c_int
+        self.user32.UpdateWindow.argtypes = [wintypes.HWND]
+        self.user32.UpdateWindow.restype = wintypes.BOOL
 
     def _build_chassis_bitmap(self):
         """
@@ -567,20 +577,34 @@ class Launcher:
                 gdi32.DeleteDC(hdc_mem)
             return True
 
-        # Fallback: chassis disabled (or bitmap not yet built) - paint
-        # the entire client area black so the screen gaps don't reveal
-        # whatever was previously on-screen.
+        # Fallback: chassis disabled (or bitmap not yet built) -
+        # paint the entire client area black so the chassis doesn't
+        # ghost on-screen after toggling BUTTONS off. Pass the typed
+        # HDC (hdc_dst) and the typed brush handle so ctypes doesn't
+        # truncate them to 32-bit on 64-bit Windows.
         rect = wintypes.RECT()
         if user32.GetClientRect(self.hwnd_container, ctypes.byref(rect)):
             BLACK_BRUSH_ID = 4
             black_brush = gdi32.GetStockObject(BLACK_BRUSH_ID)
-            user32.FillRect(hdc_param, ctypes.byref(rect), black_brush)
+            user32.FillRect(hdc_dst, ctypes.byref(rect), black_brush)
         return True
 
     def _invalidate_chassis(self):
-        """Force a full background repaint of the container."""
-        if self.hwnd_container:
-            self.user32.InvalidateRect(self.hwnd_container, None, True)
+        """
+        Force a full background repaint of the container *now*. Used
+        when toggling BUTTONS on/off so the user sees the change
+        immediately, not after the next stray paint message.
+        """
+        if not self.hwnd_container:
+            return
+        self.user32.InvalidateRect(self.hwnd_container, None, True)
+        # UpdateWindow flushes any pending WM_PAINT to the wndproc
+        # synchronously, so the new black/strip paint is visible
+        # before this function returns.
+        try:
+            self.user32.UpdateWindow(self.hwnd_container)
+        except Exception:
+            pass
 
     def cycle_max_fps(self):
         """
