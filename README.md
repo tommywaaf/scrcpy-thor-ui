@@ -1,289 +1,277 @@
 <p align="center">
-  <img src="assets/icon.png" alt="ThorCPY Logo" width="250">
+  <img src="assets/thorcrcpybuttons_logo.png" alt="ThorCrcpyButtons" width="220">
 </p>
 
-# ThorCrcpyButtons
+<h1 align="center">ThorCrcpyButtons</h1>
 
-> **Fork notice.** This is a downstream fork of the excellent
-> [ThorCPY](https://github.com/theswest/ThorCPY) by *the_swest* with a
-> handful of additions geared at making it look and feel more like a
-> real AYN Thor on the desktop. Upstream ThorCPY remains the canonical
-> project for the underlying dual-screen mirroring; please read its
-> README too.
+<p align="center">
+  <em>A dual-screen scrcpy launcher for the AYN Thor with a live virtual controller overlay.</em>
+</p>
 
-ThorCrcpyButtons is a Windows-based multi-window Scrcpy launcher,
-designed specifically for the AYN Thor. It launches two scrcpy windows
-(one for each display), embeds them into a native Windows container,
-and adds a procedurally-drawn virtual button overlay around the bottom
-screen that animates in real time with whatever you're doing on the
-device.
+ThorCrcpyButtons mirrors both screens of the AYN Thor to your Windows
+desktop and draws a real-time virtual controller around the bottom
+screen. Every button press, joystick tilt, D-pad direction and trigger
+pull on the actual handheld is reflected on screen in the same instant
+— so what you see on the desktop genuinely looks like an AYN Thor.
 
-**Primarily designed for Windows 11. Windows 10 (1809+) should work but bugs may occur.**
-
-**For Linux users, please use the upstream Linux port:**
-**https://github.com/DrSkyfaR/ThorCPY-Linux**
+It's tuned for low latency, runs at H.265 with `low-latency=1` on the
+device's MediaCodec encoder, gives you on-the-fly FPS switching
+(30 / 60 / 120) and a one-click restart for global-scale or FPS changes
+to take effect.
 
 | Main UI                             | ThorCPY Screenshot                             |
 |-------------------------------------|------------------------------------------------|
 | ![](assets/screenshots/main_ui.png) | ![](assets/screenshots/ThorCPY-Screenshot.png) |
 
+> **Designed for Windows 11.** Windows 10 (1809+) should work but bugs may occur.
 
-## What this fork adds on top of ThorCPY:
+---
 
-- **Virtual button overlay (chassis)** drawn into the empty space on
-  each side of the bottom screen, matching the AYN Thor button layout:
-  - Left strip (top → bottom): L1 / L2 LEDs, SELECT, left joystick, D-pad, HOME
-  - Right strip (top → bottom): R1 / R2 LEDs, START, X / Y / B / A cluster, right joystick, BACK
-  - Face buttons follow the Thor silkscreen: X top, A right, B bottom, Y left
-- **Live input animation** via `adb shell getevent` from the Thor's
-  *Odin Controller* node. Every press, release, axis movement and
-  trigger pull is reflected in the overlay in real time — pills
-  darken, ABXY circles dim, joystick caps offset by stick position,
-  D-pad arms light up, L1/L2/R1/R2 LEDs glow red.
-- **In-app FPS selector (30 / 60 / 120)** for the scrcpy stream.
-- **Soft-restart button** in the control panel so you can apply scale
-  or FPS changes without hand-killing the process.
-- **`BUTTONS  ON / OFF` toggle** on the control panel that hides or
-  shows the overlay at runtime; state persists in `config/config.json`.
-- **Performance pass on the scrcpy pipeline:** H.265 codec with the
-  MediaCodec `low-latency=1` option, 60 fps default, `direct3d`
-  render driver, `HIGH_PRIORITY_CLASS` for both scrcpy children, and
-  a fix for the stdout/stderr `PIPE` buffer deadlock that previously
-  caused intermittent stutter under load.
-- **Window-sync optimisations:** geometry cache + removal of
-  `SWP_NOCOPYBITS` so the embedded scrcpy windows aren't repainted
-  60×/sec when the layout is static.
+## Highlights
 
-## Original ThorCPY features (unchanged here):
+### Live virtual controller overlay
+- Procedurally drawn AYN Thor button layout in the empty space on each side of the bottom screen — no screen real estate is wasted.
+- Left strip (top → bottom): **L1 / L2 LEDs**, **SELECT**, **left joystick**, **D-pad**, **HOME**.
+- Right strip (top → bottom): **R1 / R2 LEDs**, **START**, **X / Y / B / A** cluster, **right joystick**, **BACK**.
+- Face buttons follow the AYN Thor silkscreen exactly: **X top, A right, B bottom, Y left**.
+- L1 / L2 / R1 / R2 indicators glow from dim red to bright red when their triggers fire.
+- Joystick caps offset smoothly within their wells based on real stick position (Hall-effect axes are handled with a deadzone for clean rest behaviour).
+- D-pad arms light up independently. Pills (`SELECT` / `START` / `HOME` / `BACK`) and ABXY circles darken when pressed.
+- One-click **`BUTTONS ON / OFF`** toggle in the control panel hides or shows the entire overlay; preference persists in `config/config.json`.
 
-- Custom dual-screen support for the AYN Thor (wired or wireless)
-- Dock or undock the screenshares for individual capture
-- Layout presets for precise window placement
-- Beautiful dual-screen clipboard screenshots with transparency
-- Real-time positioning sliders
+### Real-time input streaming from the device
+- Pulls events directly from the Thor's `Odin Controller` input node via `adb shell getevent -lq`, so there's no Android-side companion app to install.
+- Auto-detects the gamepad device path on startup (probes `getevent -p` and prefers `Odin Controller`, with a sensible fallback).
+- Parses the Linux event stream into a thread-safe button-state dict and throttles redraws to ~30 fps so an axis-storm never melts the renderer.
 
-## Installation:
+### Performance tuning over upstream scrcpy launches
+- Switches the codec to **H.265** with the MediaCodec **`low-latency=1`** option for sharply lower encode latency.
+- Uses the **`direct3d`** SDL render driver on Windows (lower latency than the previous `opengl`).
+- Caps at **60 fps** by default (with **30 / 60 / 120** selectable from the control panel).
+- Adds **`HIGH_PRIORITY_CLASS`** to both scrcpy children so the OS doesn't deschedule the encoder under load.
+- Fixes a serious **`subprocess.PIPE` deadlock** that intermittently stalled video and audio when scrcpy's stdout/stderr pipe filled up. (Now routed to `DEVNULL`.)
+- Tunes audio buffers to **`--audio-buffer=30 --audio-output-buffer=5`** for tight A/V sync.
+- Enables `--video-buffer=0`, `--no-mipmaps`, `--no-power-on`, `--no-cleanup` for a snappier startup and minimal jitter.
+- Reduces the bitrate scale factor (now ~50% of the previous default) to better match H.265's efficiency and avoid USB saturation when running two streams at once.
 
-> **To use ThorCPY, you must have ***USB Debugging*** enabled.**
-> **To install ***USB Debugging***:**
-> 1) **On the device, go to Settings > About device.**
-> 2) **Tap the Build number seven times to make Settings > Developer options available.**
-> 3) **Then, enable the USB Debugging option from the Developer options.**
-> You must then connect your thor via USB to your computer or just launch ThorCPY to start the wireless connection dialogue
+### Window-sync optimisations
+- Geometry cache: `SetWindowPos` is only invoked when the embedded scrcpy windows actually need to move, instead of being hit twice per frame at 60 Hz.
+- Removed `SWP_NOCOPYBITS` from the dock sync, so the embedded scrcpy frames aren't trashed by needless full repaints.
+- Hardened ctypes signatures for GDI calls (`SelectObject`, `BitBlt`, `CreateCompatibleDC`, `DeleteObject`, `DeleteDC`) so 64-bit Windows handles never get truncated.
 
+### Control panel additions
+- **FPS selector** (cycles 30 → 60 → 120) saved to `config.json`.
+- **RESTART** button that re-launches the app cleanly so global-scale or FPS changes take effect without you needing to touch a terminal.
+- **`BUTTONS ON / OFF`** chassis toggle.
+- All while preserving the upstream layout sliders, undock / dock, screenshot, wireless connection dialog and preset save/load/delete.
 
-### Option 1: Standalone Executable    
- - Prebuilt executables can be found in [Releases](https://github.com/theswest/ThorCPY/releases)
+### Inherited from upstream ThorCPY
+- Native Win32 container that hosts both scrcpy windows as embedded children.
+- Layout sliders for Top X / Y and Bottom X / Y.
+- Layout presets stored in `config/layout.json` (save / load / delete from the UI).
+- One-click clipboard screenshot of the entire docked container, including transparency where the screens aren't.
+- Wireless ADB connection dialog (Android 11+ pair-with-code or legacy `IP:5555`).
+- Comprehensive logging with daily rotation in `logs/`.
+- Full PyInstaller bundling support via `build.py`.
 
-### Option 2: Run from Source:
-> Note: Pygame does not have a wheel for Python 3.14 yet. Please use a lower version!
-1) Clone the repository:
-	- `git clone https://github.com/theswest/ThorCPY.git`
-	- `cd ThorCPY`
-2) Install Python dependencies:
-	- `pip install -r requirements.txt`
-3) Run ThorCPY
-	- `python main.py`
+---
 
-### Option 3: Build from Source:
- 1) Install PyInstaller:
-	- `pip install pyinstaller`
-2) Run the build script:
-	- `python build.py`
-3) Find your executable:
-	- Located in `dist/ThorCPY.exe`
-	- Ensure that the executable must be placed in a folder with `bin/`, `config/` and `logs/`
+## Installation
 
-**Note:** scrcpy and ADB binaries are included in the `bin/` folder for your convenience.
+> **Requirement:** USB Debugging must be enabled on your Thor.
+>
+> 1. **Settings → About device.**
+> 2. Tap **Build number** seven times.
+> 3. **Settings → Developer options → USB debugging.**
+>
+> Then connect via USB or use the in-app **Wireless** dialog to pair.
 
-## Bundled Software:
+### Option 1 — Run from source
 
-ThorCPY includes the following third-party software:
-- **scrcpy v3.3.4** by Genymobile/Romain Vimont
-- Licensed under Apache License 2.0
-- See `bin/LICENSE_scrcpy.txt` for full license text
-- Source: https://github.com/Genymobile/scrcpy
+> Pygame doesn't ship a wheel for Python 3.14 yet; use Python 3.10–3.12.
 
-This bundled software is unmodified and used as-is for the convenience of end users.
+```powershell
+git clone https://github.com/tommywaaf/ThorCrcpyButtons.git
+cd ThorCrcpyButtons
+pip install -r requirements.txt
+python main.py
+```
 
-To manually create the `bin` folder, simply extract the [latest release of scrcpy](https://github.com/Genymobile/scrcpy/releases/tag/v3.3.4) to `bin/`
+### Option 2 — Build a standalone executable
 
+```powershell
+pip install pyinstaller
+python build.py
+```
 
-## Requirements:
+Output appears at `dist/ThorCrcpyButtons.exe`. Place the executable in
+a folder that also contains `bin/`, `config/` and `logs/`.
 
-### System:
-- OS: Windows 11 (Theoretically also Windows 10 (1809+))
-- Python 3.8 or higher when running from source
-- **Device**: AYN Thor with USB debugging enabled
+### Option 3 — Pre-built release
 
-### Included Dependencies:
-- ADB (Android Debug Bridge) - in `bin/` folder
-- scrcpy binary - in `bin/` folder
+Pre-built executables (when available) live on the
+[Releases](https://github.com/tommywaaf/ThorCrcpyButtons/releases) page.
 
-### Python Dependencies:
--  See [requirements.txt](https://github.com/theswest/ThorCPY/blob/master/requirements.txt) for the full list. Install with:
-	- `pip install -r requirements.txt`
+---
 
-## Usage:
-> **To use ThorCPY, you must have ***USB Debugging*** enabled.**
-> **To install ***USB Debugging***:**
-> 1) **On the device, go to Settings > About device.**
-> 2) **Tap the Build number seven times to make Settings > Developer options available.**
-> 3) **Then, enable the USB Debugging option from the Developer options.**
-> You must then connect your thor via USB to your computer or just launch ThorCPY to start the wireless connection dialogue
+## Bundled software
 
-### Connection:
-- To connect to ThorCPY, you can either connect via USB (Charging, offline and better connection) or Wireless (No tethers)
-- To connect via USB:
-  - Ensure you have followed the steps above to enable USB Debugging. 
-  - Simply plug in your Thor and launch ThorCPY!
-- To connect wirelessly:
-  - Open ThorCPY without your device being connected via USB
-  - Open the Wireless connection menu
-  - In your Thor's developer settings, enable "Wireless USB Debugging" and press on the text to upen the submenu
-  - Press "Pair with code" and input the IP address, Port and Connection code to pair your device and the computer.
-  - Once the device has been successfuly paired, put the IP and port from the field "IP address & Port" in the settings in the "Connect by IP" settings.
-  - Close the menu - ThorCPY will automatically restart!
+ThorCrcpyButtons ships with the following third-party binaries for
+end-user convenience. They are unmodified.
 
-### Main Controls:
-- The ThorCPY control panel appears on the right hand side of your screen with the following controls:
-- Global Scale:
-    - Adjust the scale of the scrcpy outputs (requires restart)
-- Layout Adjustment:
-	- Top X/Top Y:
-		- Adjust position of top screen
-	- BOTTOM X/BOTTOM Y
-		- Adjust position of bottom screen
-- Window Controls:
-	- Undock windows: Separate windows into independent floating windows (for individual window capture e.g. streaming layout)
-	 - Dock windows: Bring undocked windows back into one, unified window
-	 - Screenshot: Capture the entire docked view to clipboard (only works when docked)
-       - Note: Screenshot background transparency is only available on Windows 11  
-- Preset Management:
-	- Adjust your layout as desired
-	 - Enter a name into the preset field
-	 - Click "SAVE" to save the layout as a preset
-	 - Click "LOAD" next to a previously saved preset to apply it
-	 - Click "DEL" next to a previously saved preset to remove it
+- **scrcpy v3.3.4** — Apache License 2.0. See `bin/LICENSE_scrcpy.txt`. Source: https://github.com/Genymobile/scrcpy
+- **ADB (Android Debug Bridge)** — Apache License 2.0.
+- **Cal Sans** font — SIL Open Font License 1.1. See `assets/fonts/OFL.txt`.
 
+To rebuild `bin/` from scratch, extract the
+[latest scrcpy release](https://github.com/Genymobile/scrcpy/releases/tag/v3.3.4)
+into the `bin/` folder.
 
-## Configuration:
+---
 
-### Layouts/Presets:
-- Presets are stored in config/layout.json
-- You can manually edit this file if needed:
-```json title:layout.json
+## Requirements
+
+| | |
+|-|-|
+| **OS** | Windows 11 (Windows 10 1809+ likely works) |
+| **Python** | 3.8+ when running from source (3.10–3.12 recommended) |
+| **Device** | AYN Thor with USB Debugging enabled |
+| **Cable** | Data-capable USB cable; USB 3 port strongly recommended |
+
+---
+
+## Usage
+
+### Connecting the device
+- **USB:** Plug in the Thor and launch ThorCrcpyButtons. The first launch will require you to tap **Allow** on the device when the RSA-key prompt appears.
+- **Wireless:** Launch without a USB device, click **Wireless** in the control panel, then either:
+  - Pair with code (Android 11+ Wireless Debugging), or
+  - Connect by `IP:5555` after enabling TCP/IP mode while still wired.
+
+### Control panel walkthrough
+
+| Element | What it does |
+|---|---|
+| `BUTTONS  ON / OFF` | Show or hide the chassis overlay (top-right of the layout area). |
+| **GLOBAL SCALE** | Sets the scrcpy capture scale (0.3 — 1.0). Requires a **RESTART** to apply. |
+| **TOP X / Y** | Position of the top scrcpy window inside the container. |
+| **BOTTOM X / Y** | Position of the bottom scrcpy window inside the container. |
+| **FPS: 30 / 60 / 120** | Cycles the scrcpy `--max-fps` cap. Requires a **RESTART** to apply. |
+| **RESTART** | Cleanly relaunches the app. Use after changing **GLOBAL SCALE** or **FPS**. |
+| **UNDOCK / DOCK** | Floats the two scrcpy windows free of the container (handy for individual capture in OBS), or pulls them back together. |
+| **SCREENSHOT** | Copies a transparent dual-screen capture of the docked container to the clipboard. (Docked only.) |
+| **WIRELESS** | Opens the wireless pairing dialog. |
+| **Save / Load / Del Preset** | Layout presets stored in `config/layout.json`. |
+
+---
+
+## Configuration
+
+### `config/config.json`
+
+```json
 {
-    "Default": {
-        "tx": 0,
-        "ty": 0,
-        "bx": 251,
-        "by": 648,
-		"global_scale": 0.6
-    },
-    "Streaming": {
-        "tx": 100,
-        "ty": 50,
-        "bx": 300,
-        "by": 700,
-		"global_scale": 0.3
-    }
+  "global_scale": 0.6,
+  "tx": 0,
+  "ty": 0,
+  "bx": 251,
+  "by": 648,
+  "max_fps": 60,
+  "chassis_enabled": true
 }
 ```
 
-### Config:
-- More general config settings are saved in config/config.json
-- You can manually edit this file if needed:
-```json title:config.json
+### `config/layout.json`
+
+```json
 {
-    "global_scale": 0.6,
+  "Default": {
     "tx": 0,
     "ty": 0,
     "bx": 251,
-    "by": 648
+    "by": 648,
+    "global_scale": 0.6
+  },
+  "Streaming": {
+    "tx": 100,
+    "ty": 50,
+    "bx": 300,
+    "by": 700,
+    "global_scale": 0.3
+  }
 }
 ```
 
-### Scaling:
-- The default scaling is set to 0.6 (60% of original resolution).
-- An easier way to change this will be added in the future, for now you can modify `global_scale` in `launcher.py`.
-- `self.global_scale = 0.6  # Change to desired scale (0.3 to 1.0 recommended)`
+### Logs
+Daily-rotated logs land in `logs/`:
+- `thorcpy_YYYYMMDD.log` — main application log.
+- `thorcpy_top_YYYYMMDD_HHMMSS.log` / `thorcpy_bottom_YYYYMMDD_HHMMSS.log` — scrcpy stream logs.
 
-### Logging:
-- Logs are automatically saved to logs/, with daily rotation. Log files are named:
-	 - `thorcpy_YYYYMMDD.log` - Main application log
-	 - `thorcpy_top_YYYYMMDD_HHMMSS.log` - Top window scrcpy output
-	 - `thorcpy_bottom_YYYYMMDD_HHMMSS.log` - Bottom window scrcpy output
-- To adjust log verbosity, modify the logging level in `main.py`:
-```python title=main.py
-logging.basicConfig(
-	level=logging.INFO, # Change to DEBUG for detailed logs
-	...
-)
+Bump the level in `main.py`:
+
+```python
+logging.basicConfig(level=logging.DEBUG, ...)
 ```
 
-## Troubleshooting:
+---
 
-### Layout issues:
-- Load the preset at 0.6 global scale and save it.
-- Delete `config/layout.json` and `config/config.json` so they are reloaded
+## Troubleshooting
 
-### Device Not Found:
-- Ensure USB debugging is enabled on your Thor - Try a different USB cable (Ensure data cable, not charging-only)
-- Revoke USB debugging authorizations and reconnect:
-	- Settings -> System -> Developer Options -> Revoke USB debugging authorizations
-- Check if ADB can see your device: `bin/adb.exe devices`
-- Restart ADB server: `bin/adb.exe kill-server` then `bin/adb.exe start-server`
+### Device not detected
+- Confirm USB Debugging is on, tap **Allow** when the RSA prompt appears.
+- Try a different (data-capable) cable; charge-only cables won't show as a device.
+- `bin\adb.exe devices` should list `e17da8dd  device`. If it shows `unauthorized`, accept the prompt on the Thor.
+- Restart the daemon: `bin\adb.exe kill-server` then `bin\adb.exe start-server`.
 
-### Scrcpy won't start:
-- Ensure that scrcpy.exe is in the bin/ folder
-- Check logs for detailed error messages
-- Try running scrcpy manually: `bin/scrcpy.exe -s YOUR_DEVICE_SERIAL`
-- Update to the latest scrcpy version
-- Ensure your device has the required display IDs (0 and 4)
+### Audio or video stutters intermittently
+- Use a **USB 3** (blue) port. Two simultaneous H.265 streams can saturate USB 2.
+- Lower **GLOBAL SCALE** (e.g. 0.5) and **RESTART**.
+- Drop **FPS** to 30 for older or low-fps games.
+- Make sure no other heavy CPU task is running on the host. (scrcpy already runs at high priority but doesn't preempt all OS work.)
 
-### Windows Won't Dock:    
- - Wait a few seconds for windows to initialize
- - Try toggling dock/undock multiple times
- - Restart the application
- - Check logs for any errors
+### Button overlay doesn't react
+- Confirm USB Debugging is enabled — the live input listener depends on `adb shell getevent`.
+- The chassis listens to `/dev/input/event9` (`Odin Controller`); other devices on the Thor's input bus shouldn't be picked up automatically. If it ever is, file an issue with `adb shell getevent -p` output attached.
 
-### Performance Issues:    
- - Reduce the global scale
- - Close other resource-intensive applications
- - Use a USB 3 port
- - Lower the max FPS in launcher.py (change --max-fps)
- - Reduce the video bitrate in scrcpy_manager.py
+### Windows won't dock or container looks blank
+- Wait a few seconds after launch; the docking monitor needs a tick to find each scrcpy window by title.
+- Toggle **DOCK / UNDOCK** once.
+- Restart the application.
 
-### Missing DLL or Import Errors
- - Reinstall dependencies: `pip install -r requirements.txt --force-reinstall`
- - Ensure Python 3.8+ is installed
- - Install Visual C++ Redistributables
+### Scrcpy won't start
+- Confirm `bin\scrcpy.exe` is present.
+- Check the latest log for errors.
+- Try running scrcpy manually: `bin\scrcpy.exe -s YOUR_DEVICE_SERIAL`.
 
+### Missing DLLs / import errors
+- `pip install -r requirements.txt --force-reinstall`.
+- Install the latest **Visual C++ Redistributables**.
 
-## Licenses
+---
 
- - This project is licensed under the **GNU General Public License v3.0** - see the LICENSE file for details, [here](https://github.com/theswest/ThorCPY/blob/master/bin/LICENSE).
- - You are free to modify and redistribute it under the same terms.
- - [Scrcpy](https://github.com/Genymobile/scrcpy) uses Apache License 2.0, which the LICENSE file can be found [here](https://github.com/theswest/ThorCPY/blob/master/bin/LICENSE_scrcpy.txt).
- - The font used in-app is [Cal Sans](https://github.com/calcom/font), which uses the SIL Open Font License 1.1. The LICENSE file can be found [here](https://github.com/theswest/ThorCPY/blob/master/assets/fonts/OFL.txt)
+## Credits & upstream
 
+ThorCrcpyButtons is built on top of the excellent
+[**ThorCPY**](https://github.com/theswest/ThorCPY) by *the_swest*,
+which provided the original dual-screen Win32 docking, layout editor,
+preset system, screenshot pipeline and wireless pairing flow. All of
+that is preserved here under GPL v3 — please support upstream.
 
-## Contributing:
+This fork additionally credits:
 
-Contributions are more than welcome! This started as a personal project but it was released after several requests.
-Feel free to submit a pull request. For major changes, please open an issue first to discuss what you would like to change.
-This was originally built as a quick personal tool, so refactoring PRs are especially welcome!
+- **[scrcpy](https://github.com/Genymobile/scrcpy)** by Romain Vimont — the screen-mirroring engine that makes any of this possible.
+- **[Cal Sans](https://github.com/calcom/font)** by Cal.com Inc. — UI typography (SIL OFL 1.1).
+- **[Pygame](https://www.pygame.org/)** — UI rendering, font drawing, off-screen surfaces for the chassis.
+- **[eldermonkey](https://github.com/eldermonkey)** — the original ThorCPY logo.
+- The AYN Thor community — for documenting the Odin Controller input map.
 
+---
 
-## Supporting:
-Buy me a coffee: https://ko-fi.com/theswest
+## License
 
-## Acknowledgements:
+ThorCrcpyButtons is licensed under the **GNU General Public License
+v3.0** (inherited from upstream ThorCPY). See `LICENSE` for the full
+text. You're free to modify and redistribute under the same terms.
 
-- **[eldermonkey](https://github.com/eldermonkey)** - For making the incredible logo
-- **[scrcpy](https://github.com/Genymobile/scrcpy)** by Romain Vimont - The backend that makes this all possible
-- **[Cal Sans](https://github.com/calcom/font)** by Cal.com Inc. - UI typography (SIL Open Font License 1.1)
-- **[Pygame](https://www.pygame.org/)** - UI rendering and event handling
-- **Microsoft** - Windows API documentation
-- All contributors and testers!
+scrcpy is licensed under Apache 2.0 — see `bin/LICENSE_scrcpy.txt`.
+Cal Sans is licensed under SIL OFL 1.1 — see `assets/fonts/OFL.txt`.
