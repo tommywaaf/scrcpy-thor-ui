@@ -494,6 +494,15 @@ class Launcher:
         Restart the entire application. Spawns a fresh main.py (or
         the bundled exe under PyInstaller) and exits this process.
         Used by the control panel after global-scale or FPS changes.
+
+        IMPORTANT: in onefile PyInstaller mode, the parent process
+        sets `_MEIPASS2` in its environment so child invocations of
+        the same exe re-use the parent's already-extracted bundle
+        folder. That's the wrong behaviour here - the parent is
+        about to exit and tear down its `_MEI...` folder, which
+        would yank `adb.exe` and `scrcpy.exe` out from under the
+        child. We scrub PyInstaller's bootloader env vars from the
+        child's environment so it creates its own fresh extraction.
         """
         import subprocess
         import sys
@@ -502,8 +511,18 @@ class Launcher:
                 cmd = [sys.executable]
             else:
                 cmd = [sys.executable, "main.py"]
+
+            child_env = os.environ.copy()
+            for key in (
+                "_MEIPASS2",
+                "_PYI_APPLICATION_HOME_DIR",
+                "_PYI_PARENT_PROCESS_LEVEL",
+                "_PYI_SPLASH_IPC",
+            ):
+                child_env.pop(key, None)
+
             logger.info(f"Restarting application: {' '.join(cmd)}")
-            subprocess.Popen(cmd, cwd=os.getcwd())
+            subprocess.Popen(cmd, cwd=os.getcwd(), env=child_env)
         except Exception as RestartSpawnError:
             logger.error(f"Failed to spawn restart process: {RestartSpawnError}",
                          exc_info=True)
