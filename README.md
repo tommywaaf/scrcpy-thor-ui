@@ -18,12 +18,38 @@
   <img src="https://img.shields.io/badge/platform-Windows%2010%2F11-0078d4?style=for-the-badge&logo=windows" alt="Windows 10/11">
 </p>
 
-> **Quick start (no Python needed):** grab `scrcpy-thor-ui-v1.0.0.zip`
-> from the [latest release](https://github.com/tommywaaf/scrcpy-thor-ui/releases/latest),
+> **Recommended (best performance) — run from source with Python.**
+> The packaged `.exe` works, but the from-source build is consistently
+> smoother in real use (no PyInstaller bootloader, no Python interpreter
+> repacking, no Windows Defender re-scanning binaries on cold launches,
+> nothing between you and the scrcpy process). Five steps:
+>
+> 1. Install **Python 3.10–3.12** from <https://www.python.org/downloads/>
+>    (Pygame doesn't ship a wheel for 3.14 yet, and 3.10 is the
+>    sweet spot the project is developed against). Tick *"Add python.exe
+>    to PATH"* in the installer.
+> 2. Open PowerShell and clone the repo somewhere convenient:
+>    ```powershell
+>    git clone https://github.com/tommywaaf/scrcpy-thor-ui.git
+>    cd scrcpy-thor-ui
+>    ```
+> 3. Install the Python dependencies (one-time):
+>    ```powershell
+>    py -3.10 -m pip install -r requirements.txt
+>    ```
+> 4. Plug in the Thor with USB debugging enabled and tap **Allow** when
+>    the RSA-key prompt appears on the device.
+> 5. Launch:
+>    ```powershell
+>    py -3.10 main.py
+>    ```
+>
+> *Prefer a one-click .exe?* Grab `scrcpy-thor-ui-v1.0.0.zip` from the
+> [latest release](https://github.com/tommywaaf/scrcpy-thor-ui/releases/latest),
 > unzip it anywhere on your PC, and double-click `scrcpy-thor-ui.exe`
-> inside the unzipped folder. `scrcpy.exe`, `adb.exe`, the supporting
-> DLLs and all assets ship inside `_internal/`. `config/` and `logs/`
-> are created next to the .exe on first launch.
+> inside the unzipped folder. `config/` and `logs/` are created next
+> to the .exe on first launch. Performance is a hair behind the
+> from-source path but absolutely usable.
 
 scrcpy-thor-ui mirrors both screens of the AYN Thor to your Windows
 desktop and draws a real-time virtual controller around the bottom
@@ -103,16 +129,23 @@ to take effect.
 >
 > Then connect via USB or use the in-app **Wireless** dialog to pair.
 
-### Option 1 — Run from source
+### Option 1 — Run from source ⭐ **Recommended for best performance**
 
-> Pygame doesn't ship a wheel for Python 3.14 yet; use Python 3.10–3.12.
+> Pygame doesn't ship a wheel for Python 3.14 yet; use Python 3.10–3.12
+> (3.10 is what the project is developed against). Make sure
+> *"Add python.exe to PATH"* is ticked when you install Python.
 
 ```powershell
 git clone https://github.com/tommywaaf/scrcpy-thor-ui.git
 cd scrcpy-thor-ui
-pip install -r requirements.txt
-python main.py
+py -3.10 -m pip install -r requirements.txt
+py -3.10 main.py
 ```
+
+That's the smoothest configuration available. The packaged `.exe`
+goes through PyInstaller's bootloader and a separate Python
+interpreter, which carries a small but noticeable runtime tax under
+heavy gameplay; the source path skips both.
 
 ### Option 2 — Build a standalone executable
 
