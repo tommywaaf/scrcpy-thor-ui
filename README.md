@@ -127,8 +127,6 @@ on Windows. Everything below is on by default.
 - Geometry cache + removed `SWP_NOCOPYBITS` so the embedded scrcpy windows aren't repainted 60×/sec when the layout is static.
 - 64-bit-safe ctypes signatures for every GDI call we make (`SelectObject`, `BitBlt`, `FillRect`, `GetStockObject`, `CreateCompatibleDC`, `DeleteObject`, `DeleteDC`, `UpdateWindow`).
 
-> **Tip for the cleanest possible image:** run your PC monitor at **60 Hz** while mirroring. The Thor's source is 60 Hz, and 1:1 alignment with the monitor refresh removes the last bit of compositor drift. (You can switch back to 144/165/240 Hz any time via Display settings.)
-
 ### Window-sync optimisations
 - Geometry cache: `SetWindowPos` is only invoked when the embedded scrcpy windows actually need to move, instead of being hit twice per frame at 60 Hz.
 - Removed `SWP_NOCOPYBITS` from the dock sync, so the embedded scrcpy frames aren't trashed by needless full repaints.
@@ -310,7 +308,6 @@ logging.basicConfig(level=logging.DEBUG, ...)
 
 ### Audio or video stutters intermittently
 - Use a **USB 3** (blue) port. Two simultaneous H.264 streams + audio comfortably fit USB 2 but USB 3 has more headroom for the highest-quality CBR settings.
-- For the smoothest result, set your monitor to **60 Hz** while mirroring (Display settings → Advanced display → Choose a refresh rate).
 - Lower **GLOBAL SCALE** (e.g. 0.5) and **RESTART**.
 - Drop **FPS** to 30 for older or low-fps games.
 - Make sure no other heavy CPU task is running on the host. (scrcpy already runs at high priority but doesn't preempt all OS work.)
