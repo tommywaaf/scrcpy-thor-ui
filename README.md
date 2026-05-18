@@ -34,9 +34,9 @@ device's MediaCodec encoder, gives you on-the-fly FPS switching
 (30 / 60 / 120) and a one-click restart for global-scale or FPS changes
 to take effect.
 
-| Main UI                             | ThorCPY Screenshot                             |
-|-------------------------------------|------------------------------------------------|
-| ![](assets/screenshots/main_ui.png) | ![](assets/screenshots/ThorCPY-Screenshot.png) |
+| Menu UI                             | Mirror UI                              |
+|-------------------------------------|----------------------------------------|
+| ![](assets/screenshots/menu_ui.png) | ![](assets/screenshots/mirror_ui.png)  |
 
 > **Designed for Windows 11.** Windows 10 (1809+) should work but bugs may occur.
 
@@ -80,7 +80,7 @@ to take effect.
 - **`BUTTONS ON / OFF`** chassis toggle.
 - All while preserving the upstream layout sliders, undock / dock, screenshot, wireless connection dialog and preset save/load/delete.
 
-### Inherited from upstream ThorCPY
+### Inherited features
 - Native Win32 container that hosts both scrcpy windows as embedded children.
 - Layout sliders for Top X / Y and Bottom X / Y.
 - Layout presets stored in `config/layout.json` (save / load / delete from the UI).
