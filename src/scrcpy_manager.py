@@ -736,13 +736,15 @@ class ScrcpyManager:
             # encoder under odd conditions.
             "--video-encoder=c2.qti.avc.encoder",
             f"--video-codec-options={codec_options}",
-            # 80 ms (~5 frames at 60 Hz) of jitter buffering. With
-            # the encoder now emitting a uniform bitstream (CBR +
-            # intra-refresh + no big keyframes), this is plenty of
-            # headroom for any residual decode/render variance to
-            # smooth out. Right at the human lip-sync threshold so
-            # the extra latency stays imperceptible.
-            "--video-buffer=80",
+            # 75 ms (~4-5 frames at 60 Hz) of display buffering.
+            # Encoder output is already perfectly uniform (CBR +
+            # intra-refresh), but the HOST pipeline still has
+            # irreducible variance: software H.264 decode in
+            # libavcodec, DWM compositor scheduling, monitor
+            # scanout. The buffer masks that into a steady on-screen
+            # cadence; total input-to-display lag still sits at the
+            # edge of the human lip-sync threshold (~80 ms).
+            "--video-buffer=75",
             "--no-mipmaps",
             "--no-power-on",
             "--no-cleanup",

@@ -44,7 +44,7 @@
 >    py -3.10 main.py
 >    ```
 >
-> *Prefer a one-click .exe?* Grab `scrcpy-thor-ui-v1.0.0.zip` from the
+> *Prefer a one-click .exe?* Grab `scrcpy-thor-ui-v1.0.1.zip` from the
 > [latest release](https://github.com/tommywaaf/scrcpy-thor-ui/releases/latest),
 > unzip it anywhere on your PC, and double-click `scrcpy-thor-ui.exe`
 > inside the unzipped folder. `config/` and `logs/` are created next
@@ -61,10 +61,10 @@ It's tuned for the smoothest possible mirroring over USB: hardware
 H.264 encoding on the device, software-friendly H.264 decoding on
 the host, Direct3D 11 presentation with vsync disabled to match
 high-refresh monitors, a constant-bitrate stream with intra-refresh
-slices (no keyframe spikes) and a generous 80 ms display buffer to
-absorb any residual decode/render jitter. On-the-fly FPS switching
-(30 / 60 / 90 / 120), one-click restart, and a real-time virtual
-controller overlay round it out.
+slices so there are no keyframe spikes, and a 75 ms display buffer
+to mask the irreducible host-side variance from software decode +
+DWM. On-the-fly FPS switching (30 / 60 / 90 / 120), one-click
+restart, and a real-time virtual controller overlay round it out.
 
 | Menu UI                             | Mirror UI                              |
 |-------------------------------------|----------------------------------------|
@@ -79,7 +79,7 @@ controller overlay round it out.
 ### Live virtual controller overlay
 - Procedurally drawn AYN Thor button layout in the empty space on each side of the bottom screen — no screen real estate is wasted.
 - Left strip (top → bottom): **L1 / L2 LEDs**, **SELECT**, **left joystick**, **D-pad**, **HOME**.
-- Right strip (top → bottom): **R1 / R2 LEDs**, **START**, **X / Y / B / A** cluster, **right joystick**, **BACK**.
+- Right strip (top → bottom): **R1 / R2 LEDs**, **START**, **X / Y / B / A** cluster, **right joystick**, **BACK**, **AYN** system pill.
 - Face buttons follow the AYN Thor silkscreen exactly: **X top, A right, B bottom, Y left**.
 - L1 / L2 / R1 / R2 indicators glow from dim red to bright red when their triggers fire.
 - Joystick caps offset smoothly within their wells based on real stick position (Hall-effect axes are handled with a deadzone for clean rest behaviour).
@@ -87,8 +87,8 @@ controller overlay round it out.
 - One-click **`BUTTONS ON / OFF`** toggle in the control panel hides or shows the entire overlay; preference persists in `config/config.json`.
 
 ### Real-time input streaming from the device
-- Pulls events directly from the Thor's `Odin Controller` input node via `adb shell getevent -lq`, so there's no Android-side companion app to install.
-- Auto-detects the gamepad device path on startup (probes `getevent -p` and prefers `Odin Controller`, with a sensible fallback).
+- Pulls events directly from the Thor via `adb shell getevent -lq` across **all** input nodes, so there's no Android-side companion app to install.
+- Listening broadly is required because the gamepad lives on the `Odin Controller` node (`event9`) while the dedicated **AYN system button** is a kernel gpio-key on a separate node (`event4`). The parser whitelists known `BTN_*` / `KEY_*` / `ABS_*` codes so unrelated traffic (touchscreen, audio jack, etc.) is dropped cheaply.
 - Parses the Linux event stream into a thread-safe button-state dict and throttles redraws to ~30 fps so an axis-storm never melts the renderer.
 
 ### Performance tuning (the whole pipeline, end to end)
@@ -113,7 +113,7 @@ on Windows. Everything below is on by default.
 **Host (PC) side:**
 - **`--render-driver=direct3d11`** — SDL's modern Direct3D 11 backend. Replacing the upstream `direct3d` (D3D9) was a big win on Windows 11 because D3D9's child-window presentation path is heavily DWM-throttled.
 - **`SDL_RENDER_VSYNC=0`** — disables SDL's vsync wait inside scrcpy. On high-refresh monitors (144/165/240 Hz) the source rate (60 Hz) doesn't align with display vsync slots, and waiting for them caused dropped/coalesced frames. Tearing on a 200+ Hz panel is essentially invisible.
-- **`--video-buffer=80`** — 5 frames of jitter buffering at 60 Hz. With the encoder emitting a uniform bitstream, this absorbs any residual variance and presents at a perfectly steady cadence.
+- **`--video-buffer=75`** — ~4-5 frames of display buffering at 60 Hz. The encoder side is already perfectly uniform, but software H.264 decode + DWM compositor scheduling + monitor scanout all have their own per-frame variance. The buffer masks that into a steady on-screen cadence; total input-to-display lag sits right at the human lip-sync threshold (~80 ms).
 - **`HIGH_PRIORITY_CLASS`** for both scrcpy children + **`ABOVE_NORMAL_PRIORITY_CLASS`** for the host process so neither gets descheduled when other apps spike.
 - **`subprocess.PIPE` deadlock fix** — scrcpy's stdout/stderr now go to real file handles (per-instance log files) instead of unread `PIPE`s. Closes the path that previously caused intermittent multi-second stalls.
 - **Audio buffers tuned** to `--audio-buffer=60 --audio-output-buffer=15` so dense music doesn't underrun the SDL audio output.
@@ -314,7 +314,7 @@ logging.basicConfig(level=logging.DEBUG, ...)
 
 ### Button overlay doesn't react
 - Confirm USB Debugging is enabled — the live input listener depends on `adb shell getevent`.
-- The chassis listens to `/dev/input/event9` (`Odin Controller`); other devices on the Thor's input bus shouldn't be picked up automatically. If it ever is, file an issue with `adb shell getevent -p` output attached.
+- The chassis listens across all input nodes (gamepad on `Odin Controller`, AYN button on `gpio-keys`) and only acts on whitelisted codes. If a button on your unit reports a code we haven't mapped yet, run `adb shell getevent -lt` while pressing it and open an issue with the captured `EV_KEY` lines.
 
 ### Windows won't dock or container looks blank
 - Wait a few seconds after launch; the docking monitor needs a tick to find each scrcpy window by title.

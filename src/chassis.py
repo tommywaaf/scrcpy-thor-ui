@@ -157,14 +157,16 @@ class ChassisRenderer:
         return max(28, min(int(rect.w / 3.5), int(rect.h / 7)))
 
     def _draw_left_strip(self, s, rect, btn):
-        # Vertical layout: L1/L2 LEDs, SELECT, joystick, dpad, HOME
+        # Vertical layout: L1/L2 LEDs, SELECT, joystick, dpad, HOME.
+        # HOME shares its y-row exactly with BACK on the right strip
+        # so the two system buttons line up across the bottom screen.
         cx = rect.x + rect.w // 2
         anchor = self._strip_anchor_size(rect)
         led_y = rect.y + int(rect.h * 0.025) + 10
         select_y = rect.y + int(rect.h * 0.10)
         joystick_y = rect.y + int(rect.h * 0.32)
         dpad_y = rect.y + int(rect.h * 0.63)
-        home_y = rect.y + int(rect.h * 0.93)
+        home_y = rect.y + int(rect.h * 0.92)
 
         self._draw_trigger_leds(s, cx, led_y, anchor,
                                 ("L1", btn.get("l1")), ("L2", btn.get("l2")))
@@ -178,14 +180,18 @@ class ChassisRenderer:
         self._draw_pill(s, cx, home_y, "HOME", anchor, btn.get("home"))
 
     def _draw_right_strip(self, s, rect, btn):
-        # Vertical layout: R1/R2 LEDs, START, ABXY, joystick, BACK
+        # Vertical layout: R1/R2 LEDs, START, ABXY, joystick, BACK.
+        # The AYN system-menu button (KEY_APPSELECT) is rendered as a
+        # small pill positioned slightly below-and-left of BACK, like
+        # a satellite to the right strip's main bottom button.
         cx = rect.x + rect.w // 2
         anchor = self._strip_anchor_size(rect)
         led_y = rect.y + int(rect.h * 0.025) + 10
         start_y = rect.y + int(rect.h * 0.10)
         abxy_y = rect.y + int(rect.h * 0.32)
         joystick_y = rect.y + int(rect.h * 0.63)
-        back_y = rect.y + int(rect.h * 0.93)
+        # BACK on the same y-row as HOME on the left strip.
+        back_y = rect.y + int(rect.h * 0.92)
 
         self._draw_trigger_leds(s, cx, led_y, anchor,
                                 ("R1", btn.get("r1")), ("R2", btn.get("r2")))
@@ -195,6 +201,35 @@ class ChassisRenderer:
                             btn.get("rstick_x", 0.0), btn.get("rstick_y", 0.0),
                             pressed=btn.get("r3"))
         self._draw_pill(s, cx, back_y, "BACK", anchor, btn.get("back"))
+        # Small AYN pill below + to the left of BACK. Sized and
+        # positioned to stay inside the strip (not clip off bottom)
+        # and to sit closer to the bottom screen than to the right
+        # edge of the strip.
+        ayn_anchor = max(18, int(anchor * 0.55))
+        ayn_cx = cx - int(anchor * 1.05)
+        ayn_cy = back_y + int(anchor * 0.32)
+        self._draw_pill(s, ayn_cx, ayn_cy, "AYN", ayn_anchor, btn.get("ayn"))
+
+    def _draw_single_led(self, s, cx, cy, anchor_size, label, pressed):
+        """
+        One LED with a centered label below it. Same visual language
+        as the L1/L2/R1/R2 trigger LEDs - dim red when idle, bright
+        red when pressed - used for the AYN system-menu button at
+        the bottom of the right strip.
+        """
+        led_r = max(6, int(anchor_size * 0.20))
+        color = COLOR_LED_ON if pressed else COLOR_LED_OFF
+        # Inset rim shadow + LED face
+        pygame.draw.circle(s, COLOR_LED_RIM, (cx, cy + 1), led_r + 2)
+        pygame.draw.circle(s, color, (cx, cy), led_r)
+        if pressed:
+            pygame.draw.circle(s, _darken(color, 1.4),
+                               (cx - led_r // 3, cy - led_r // 3),
+                               max(2, led_r // 3))
+        font_size = max(9, int(led_r * 1.0))
+        font = self._font(font_size)
+        text = font.render(label, True, COLOR_LED_LABEL)
+        s.blit(text, text.get_rect(center=(cx, cy + led_r + font_size)))
 
     def _draw_trigger_leds(self, s, cx, cy, anchor_size, left, right):
         """

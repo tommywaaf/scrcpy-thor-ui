@@ -5,11 +5,17 @@
 
 # src/input_listener.py
 #
-# Streams the AYN Thor's gamepad input events back to the host via
-# `adb shell getevent -lq /dev/input/event9` ("Odin Controller").
+# Streams the AYN Thor's input events back to the host via
+# `adb shell getevent -lq` (no device path = listen to ALL nodes).
 # Each parsed event updates a thread-safe ButtonState dict that the
 # chassis renderer reads to highlight pressed buttons and offset
 # joystick caps in real time.
+#
+# We listen to all input nodes rather than a single one because the
+# AYN system button is a kernel gpio-key (event4), while the gamepad
+# controls live on the "Odin Controller" node (event9). The parser
+# whitelists only known KEY_/BTN_/ABS_ codes, so noise from touch
+# screens, audio jacks, etc. is dropped cheaply.
 #
 # A standard Linux gamepad reports the four face buttons by physical
 # POSITION rather than by silkscreen label, so:
@@ -63,7 +69,8 @@ KEY_MAP = {
     "BTN_MODE":       "home",
     "KEY_HOME":       "home",
     "KEY_BACK":       "back",
-    "KEY_APPSELECT":  "appselect",
+    "KEY_APPSELECT":  "ayn",     # historical: some Thor builds report APPSELECT
+    "KEY_F24":        "ayn",     # actual AYN-button keycode on this Thor unit
     # Stick clicks
     "BTN_THUMBL":     "l3",
     "BTN_THUMBR":     "r3",
@@ -118,17 +125,16 @@ class InputListener:
             logger.error("InputListener: missing adb binary or device serial")
             return False
 
-        # Auto-detect the controller node if the default doesn't exist.
-        probed = self._probe_device_path()
-        if probed:
-            self.device_path = probed
-
+        # We intentionally do NOT probe for a specific input device
+        # here - the AYN system button and the gamepad live on
+        # different nodes, so we run getevent across all nodes and
+        # let the parser whitelist what it cares about.
         self._stop.clear()
         self._thread = threading.Thread(
             target=self._run, daemon=True, name="ThorInputListener"
         )
         self._thread.start()
-        logger.info(f"InputListener started on {self.device_path}")
+        logger.info("InputListener started (listening on all input nodes)")
         return True
 
     def stop(self):
@@ -206,9 +212,16 @@ class InputListener:
 
     def _run(self):
         try:
+            # No device path - listen to ALL input nodes. The AYN
+            # system button on the Thor lives on /dev/input/event4
+            # (gpio-keys), NOT on the Odin Controller gamepad node,
+            # so a single-device getevent misses it. Listening
+            # broadly is essentially free here because our parser
+            # only acts on whitelisted KEY_/BTN_/ABS_ codes; events
+            # from touch screens, audio jacks, etc. are dropped.
             cmd = [
                 self.adb_bin, "-s", self.serial,
-                "shell", f"getevent -lq {self.device_path}",
+                "shell", "getevent -lq",
             ]
             logger.debug(f"Spawning input listener: {' '.join(cmd)}")
             self._proc = subprocess.Popen(

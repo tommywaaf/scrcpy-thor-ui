@@ -17,7 +17,7 @@
 
 # main.py
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 __app_name__ = "scrcpy-thor-ui"
 __author__ = "tommywaaf (fork of ThorCPY by the_swest)"
 __description__ = "AYN Thor screen mirroring + live virtual controller overlay"
